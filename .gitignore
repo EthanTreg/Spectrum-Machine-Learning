@@ -1,0 +1,7 @@
+/data/
+/.idea
+**/*.bg
+**/*.arf
+**/*.rmf
+**/*.jsgrp
+**/test.py
