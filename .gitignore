@@ -4,4 +4,4 @@
 **/*.arf
 **/*.rmf
 **/*.jsgrp
-**/test.py
+**/*test*
