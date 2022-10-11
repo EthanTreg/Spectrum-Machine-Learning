@@ -1,6 +1,7 @@
+import os
 import numpy as np
-from matplotlib import pyplot as plt
 from xspec import Spectrum, Plot
+from matplotlib import pyplot as plt
 from data_preprocessing import spectrum_data
 
 
@@ -11,8 +12,6 @@ def diff_plot(
         y_data_2: np.ndarray):
     """
     Plots the ratio between two data sets (set 1 / set 2)
-
-    Length of set 1 >= length of set 2
 
     Parameters
     ----------
@@ -37,7 +36,7 @@ def diff_plot(
     plt.xlabel('Energy (keV)', fontsize=20)
     plt.ylabel('PyXspec / fits data', fontsize=20)
     plt.text(0.05, 0.2,
-             f'Average ratio: {round(np.mean(diff), 2)}',
+             f'Average ratio: {round(np.mean(diff), 3)}',
              fontsize=16, transform=plt.gca().transAxes
              )
 
@@ -62,7 +61,7 @@ def spectrum_plot(x_bin: np.ndarray, y_bin: np.ndarray, x_px: np.ndarray, y_px: 
     plt.ylabel(r'Counts $s^{-1}$ $detector^{-1}$ $keV^{-1}$', fontsize=20)
     plt.scatter(x_bin, y_bin, label='Fits data', marker='x')
     plt.scatter(x_px, y_px, label='PyXspec data')
-    plt.xlim([0.15, 15])
+    plt.xlim([0.15, 14.5])
     plt.xscale('log')
     plt.yscale('log')
     plt.legend(fontsize=20)
@@ -78,17 +77,19 @@ def main():
     # spectra = 'js_ni0001020103_0mpu7_goddard_GTI0.jsgrp'
 
     # PyXspec data & plotting
-    Spectrum('./data/' + spectrum)
+    os.chdir('./data/')
+    Spectrum('./test/' + spectrum)
     Plot.device = '/NULL'
     Plot.xAxis = 'keV'
     # Plot.yLog = True
     # Plot.addCommand('rescale x 0.15 15')
     # Plot.addCommand('rescale y 1e-3 60')
     Plot('data')
+    os.chdir('../')
 
     # PyXspec data
-    x_px = np.array(Plot.x())
-    y_px = np.array(Plot.y()) / 49
+    x_px = np.array(Plot.x())[:-1]
+    y_px = np.array(Plot.y())[:-1] / 49
 
     x_bin, y_bin = spectrum_data('./data/training', spectrum)
 
@@ -96,7 +97,7 @@ def main():
     if plot_diff:
         plt.figure(constrained_layout=True, figsize=(16, 18))
         plt.subplot(2, 1, 2)
-        diff_plot(x_px, y_px, x_bin, y_bin)
+        diff_plot(x_bin, y_bin, x_px, y_px)
         plt.subplot(2, 1, 1)
     else:
         plt.figure(constrained_layout=True, figsize=(16, 12))

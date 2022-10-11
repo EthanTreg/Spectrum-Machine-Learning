@@ -1,5 +1,9 @@
 [MASTER]
 ignore-patterns=(.)*_test\.py,test_(.)*\.py,test.py
+init-hook='import sys; import os; sys.path.append(os.path.dirname(os.path.abspath(__file__)))'
 
 [BASIC]
-good-names=f, i, j, k
+good-names=f, i, j, k, x
+
+[TYPECHECK]
+generated-members=torch.*

@@ -49,7 +49,6 @@ def binning(
     (ndarray, ndarray)
         Binned (x, y) data
     """
-
     x_data = x_data[clow:chi]
     y_data = y_data[clow:chi]
 
@@ -59,7 +58,7 @@ def binning(
     return x_data, y_data
 
 
-def spectrum_data(data_dir: str, spectrum: str) -> np.ndarray:
+def spectrum_data(data_dir: str, spectrum: str, cut_off: list=None) -> np.ndarray:
     """
     Fetches binned data from spectrum
 
@@ -71,6 +70,8 @@ def spectrum_data(data_dir: str, spectrum: str) -> np.ndarray:
         Path to the root directory where spectrum and backgrounds are located
     spectrum : string
         Name of the spectrum to fetch
+    cut_off : list, default=[0.15, 14.5]
+        Range of accepted data in keV
 
     Returns
     -------
@@ -80,15 +81,22 @@ def spectrum_data(data_dir: str, spectrum: str) -> np.ndarray:
     # Initialize variables
     x_bin = np.array(())
     y_bin = np.array(())
-    bins = np.array([[0, 20, 248, 600, 1200, 1500], [2, 3, 4, 5, 6, 1]], dtype=int)
+    bins = np.array([[0, 20, 248, 600, 1200, 1494, 1500], [2, 3, 4, 5, 6, 2, 1]], dtype=int)
+    # bins = np.array([
+    #     [0, 14, 16, 20, 248, 600, 1200, 1248, 1250, 1254, 1494, 1500],
+    #     [2, 1, 2, 3, 4, 5, 6, 2, 4, 6, 2, 1]
+    # ], dtype=int)
+
+    if not cut_off:
+        cut_off = [0.15, 14.6]
 
     # Fetch spectrum & background fits files
-    with fits.open(data_dir + '/spectra/' + spectrum) as f:
+    with fits.open(data_dir + '/' + spectrum) as f:
         spectrum_info = f[1].header
         spectrum = pd.DataFrame(f[1].data)
         detectors = int(f[1].header['RESPFILE'][7:9])
 
-    with fits.open(data_dir + '/backgrounds/' + spectrum_info['BACKFILE']) as f:
+    with fits.open(data_dir + '/' + spectrum_info['BACKFILE']) as f:
         background_info = f[1].header
         background = pd.DataFrame(f[1].data)
 
@@ -106,5 +114,9 @@ def spectrum_data(data_dir: str, spectrum: str) -> np.ndarray:
         y_new /= bins[1, i] * 1e-2
         x_bin = np.append(x_bin, x_new)
         y_bin = np.append(y_bin, y_new)
+
+    cut_indices = np.argwhere((x_bin < cut_off[0]) | (x_bin > cut_off[1]))
+    x_bin = np.delete(x_bin, cut_indices)
+    y_bin = np.delete(y_bin, cut_indices)
 
     return np.array((x_bin, y_bin))
