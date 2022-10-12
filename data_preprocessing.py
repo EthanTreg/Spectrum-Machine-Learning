@@ -1,6 +1,30 @@
+import os
 import numpy as np
 import pandas as pd
 from astropy.io import fits
+
+
+def progress_bar(i: int, total: int):
+    """
+    Terminal progress bar
+
+    Parameters
+    ----------
+    i : int
+        Current progress
+    total : int
+        Completion number
+    """
+    length = 50
+    i += 1
+
+    filled = int(i * length / total)
+    percent = i * 100 / total
+    bar_fill = '█' * filled + '-' * (length - filled)
+    print(f'\rProgress: |{bar_fill}| {int(percent)}%\t', end='')
+
+    if i == total:
+        print()
 
 
 def channel_kev(channel: np.ndarray) -> np.ndarray:
@@ -58,7 +82,28 @@ def binning(
     return x_data, y_data
 
 
-def spectrum_data(data_dir: str, spectrum: str, cut_off: list=None) -> np.ndarray:
+def spectra_names(data_dir: str) -> np.ndarray:
+    """
+    Fetches the file names of all spectra up to the defined data amount
+
+    Parameters
+    ----------
+    data_dir : string
+        Directory of the spectra dataset
+
+    Returns
+    -------
+    ndarray
+        Array of spectra file names
+    """
+    # Fetch all files within directory
+    all_files = os.listdir(data_dir)
+
+    # Remove all files that aren't spectra
+    return np.delete(all_files, np.char.find(all_files, '.jsgrp') == -1)
+
+
+def spectrum_data(data_dir: str, spectrum: str, cut_off: list = None) -> np.ndarray:
     """
     Fetches binned data from spectrum
 
@@ -70,7 +115,7 @@ def spectrum_data(data_dir: str, spectrum: str, cut_off: list=None) -> np.ndarra
         Path to the root directory where spectrum and backgrounds are located
     spectrum : string
         Name of the spectrum to fetch
-    cut_off : list, default=[0.15, 14.5]
+    cut_off : list, default=[0.3, 10]
         Range of accepted data in keV
 
     Returns
@@ -88,7 +133,7 @@ def spectrum_data(data_dir: str, spectrum: str, cut_off: list=None) -> np.ndarra
     # ], dtype=int)
 
     if not cut_off:
-        cut_off = [0.15, 14.6]
+        cut_off = [0.3, 10]
 
     # Fetch spectrum & background fits files
     with fits.open(data_dir + '/' + spectrum) as f:
@@ -120,3 +165,34 @@ def spectrum_data(data_dir: str, spectrum: str, cut_off: list=None) -> np.ndarra
     y_bin = np.delete(y_bin, cut_indices)
 
     return np.array((x_bin, y_bin))
+
+
+def preprocess():
+    """
+    Preprocess spectra and save to file
+    """
+    # Initialize variables
+    data_dir = '../../Documents/Nicer_Data/ethan'
+    labels_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
+    spectra = []
+
+    # Fetch spectra names & labels
+    spectra_files = spectra_names(data_dir)
+    labels = np.loadtxt(labels_path, skiprows=6, dtype=str)
+
+    # Remove data that doesn't have a label
+    bad_indices = np.invert(np.in1d(spectra_files, labels[:, 6]))
+    spectra_files = np.delete(spectra_files, bad_indices)
+
+    # Fetch spectra data
+    for i, spectrum_name in enumerate(spectra_files):
+        spectra.append(spectrum_data(data_dir, spectrum_name)[1])
+        progress_bar(i, spectra_files.size)
+
+    # Save spectra data
+    spectra = np.vstack(spectra)
+    np.save('./data/preprocessed_spectra', spectra)
+
+
+if __name__ == '__main__':
+    preprocess()
