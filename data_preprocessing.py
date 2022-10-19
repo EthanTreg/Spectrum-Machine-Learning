@@ -103,7 +103,7 @@ def spectra_names(data_dir: str) -> np.ndarray:
     return np.delete(all_files, np.char.find(all_files, '.jsgrp') == -1)
 
 
-def spectrum_data(data_dir: str, spectrum: str, cut_off: list = None) -> np.ndarray:
+def spectrum_data(spectrum_path: str, background_dir: str, cut_off: list = None) -> np.ndarray:
     """
     Fetches binned data from spectrum
 
@@ -111,11 +111,11 @@ def spectrum_data(data_dir: str, spectrum: str, cut_off: list = None) -> np.ndar
 
     Parameters
     ----------
-    data_dir : string
-        Path to the root directory where spectrum and backgrounds are located
-    spectrum : string
-        Name of the spectrum to fetch
-    cut_off : list, default=[0.3, 10]
+    spectrum_path : string
+        File path to the spectrum
+    background_dir : string
+        Path to the root directory where the background is located
+    cut_off : list, default = [0.3, 10]
         Range of accepted data in keV
 
     Returns
@@ -127,31 +127,36 @@ def spectrum_data(data_dir: str, spectrum: str, cut_off: list = None) -> np.ndar
     x_bin = np.array(())
     y_bin = np.array(())
     bins = np.array([[0, 20, 248, 600, 1200, 1494, 1500], [2, 3, 4, 5, 6, 2, 1]], dtype=int)
-    # bins = np.array([
-    #     [0, 14, 16, 20, 248, 600, 1200, 1248, 1250, 1254, 1494, 1500],
-    #     [2, 1, 2, 3, 4, 5, 6, 2, 4, 6, 2, 1]
-    # ], dtype=int)
 
     if not cut_off:
         cut_off = [0.3, 10]
 
     # Fetch spectrum & background fits files
-    with fits.open(data_dir + '/' + spectrum) as f:
+    with fits.open(spectrum_path) as f:
         spectrum_info = f[1].header
         spectrum = pd.DataFrame(f[1].data)
-        detectors = int(f[1].header['RESPFILE'][7:9])
+        response = f[1].header['RESPFILE']
+        detectors = int(response[response.find('_d') + 2:response.find('_d') + 4])
 
-    with fits.open(data_dir + '/' + spectrum_info['BACKFILE']) as f:
+    with fits.open(background_dir + spectrum_info['BACKFILE']) as f:
         background_info = f[1].header
         background = pd.DataFrame(f[1].data)
 
     # Pre binned data
     x_data = channel_kev(spectrum.CHANNEL.to_numpy())
-    y_data = (
-             spectrum.COUNTS /
-             spectrum_info['EXPOSURE'] - background.COUNTS /
-             background_info['EXPOSURE']
-             ).to_numpy() / detectors
+    if 'COUNTS' in spectrum and 'COUNTS' in background:
+        y_data = (
+                 spectrum.COUNTS /
+                 spectrum_info['EXPOSURE'] - background.COUNTS /
+                 background_info['EXPOSURE']
+                 ).to_numpy() / detectors
+    elif 'COUNTS' in spectrum:
+        y_data = (
+                 spectrum.COUNTS /
+                 spectrum_info['EXPOSURE'] - background.RATE
+         ).to_numpy() / detectors
+    else:
+        y_data = (spectrum.RATE - background.RATE).to_numpy() / detectors
 
     # Bin data
     for i in range(bins.shape[1] - 1):
@@ -172,21 +177,18 @@ def preprocess():
     Preprocess spectra and save to file
     """
     # Initialize variables
-    data_dir = '../../Documents/Nicer_Data/ethan'
+    data_dir = '../../Documents/Nicer_Data/ethan/'
     labels_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
     spectra = []
 
     # Fetch spectra names & labels
-    spectra_files = spectra_names(data_dir)
+    # spectra_files = spectra_names(data_dir)
     labels = np.loadtxt(labels_path, skiprows=6, dtype=str)
-
-    # Remove data that doesn't have a label
-    bad_indices = np.invert(np.in1d(spectra_files, labels[:, 6]))
-    spectra_files = np.delete(spectra_files, bad_indices)
+    spectra_files = labels[:, 6]
 
     # Fetch spectra data
     for i, spectrum_name in enumerate(spectra_files):
-        spectra.append(spectrum_data(data_dir, spectrum_name)[1])
+        spectra.append(spectrum_data(data_dir + spectrum_name, data_dir)[1])
         progress_bar(i, spectra_files.size)
 
     # Save spectra data

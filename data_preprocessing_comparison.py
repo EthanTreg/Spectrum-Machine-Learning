@@ -1,4 +1,3 @@
-import os
 import numpy as np
 from xspec import Spectrum, Plot
 from matplotlib import pyplot as plt
@@ -73,25 +72,26 @@ def main():
     """
     # Initialize variables
     plot_diff = True
-    spectrum = 'js_ni2101010101_0mpu7_goddard_GTI0.jsgrp'
+    # spectrum = 'js_ni2101010101_0mpu7_goddard_GTI0.jsgrp'
     # spectra = 'js_ni0001020103_0mpu7_goddard_GTI0.jsgrp'
+    spectrum = './data/synth_spectra/synth_03.fits'
 
     # PyXspec data & plotting
-    os.chdir('./data/')
-    Spectrum('./test/' + spectrum)
+    # os.chdir('./data/')
+    Spectrum(spectrum)
     Plot.device = '/NULL'
     Plot.xAxis = 'keV'
     # Plot.yLog = True
     # Plot.addCommand('rescale x 0.15 15')
     # Plot.addCommand('rescale y 1e-3 60')
     Plot('data')
-    os.chdir('../')
+    # os.chdir('../')
 
     # PyXspec data
     x_px = np.array(Plot.x())[:-1]
     y_px = np.array(Plot.y())[:-1] / 49
 
-    x_bin, y_bin = spectrum_data('./data/training', spectrum)
+    x_bin, y_bin = spectrum_data(spectrum, '')
 
     # Pyplot plotting of binned fits data & PyXspec data
     if plot_diff:

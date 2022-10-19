@@ -1,12 +1,12 @@
 # TODO: Does log x affect results?
 import os
 from time import time
+import xspec
 import torch
 import numpy as np
 from torch import nn
 from torch import optim, Tensor
 from torch.utils.data import Dataset, DataLoader, random_split
-from xspec import Spectrum, Model, Fit, Xset, AllData
 
 
 class SpectrumDataset(Dataset):
@@ -15,34 +15,32 @@ class SpectrumDataset(Dataset):
 
     Attributes
     ----------
-    labels_file : str, default = None
-        Path to the labels file, if none, then an unsupervised approach is used
     spectra : tensor
         Spectra dataset
-    labels : ndarray
-        labels for each spectra if supervised
+    params : tensor
+        Parameters for each spectra if supervised
+    names : ndarray
+        Names of each spectrum
     """
-    def __init__(self, data_dir: str, labels_file: str = None):
+    def __init__(self, data_dir: str, labels_file: str):
         """
         Parameters
         ----------
         data_dir : str
             Directory of the spectra dataset
-        labels_file : str, default = None
+        labels_file : str
             Path to the labels file, if none, then an unsupervised approach is used
         """
-        self.labels_file = labels_file
         self.spectra = torch.from_numpy(np.load(data_dir))
 
-        if labels_file:
-            self.labels = torch.from_numpy(
-                np.loadtxt(self.labels_file, skiprows=6, dtype=str)[:, 9:].astype(float)
-            )
+        labels = np.loadtxt(labels_file, skiprows=6, dtype=str)
+        self.names = labels[:, 6]
+        self.params = torch.from_numpy(labels[:, 9:].astype(float))
 
     def __len__(self):
         return self.spectra.shape[0]
 
-    def __getitem__(self, idx: int) -> tuple[Tensor | float, Tensor | np.ndarray]:
+    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, str]:
         """
         Gets the spectrum data for a given index
         If supervised learning return target parameters of spectrum otherwise returns spectrum name
@@ -54,18 +52,97 @@ class SpectrumDataset(Dataset):
 
         Returns
         -------
-        (tensor, tensor | ndarray)
-            Spectrum tensor and target parameters if supervised otherwise spectrum name
+        (tensor, tensor, str)
+            Spectrum data, target parameters and spectrum name
         """
-        spectrum = self.spectra[idx]
+        return self.spectra[idx], self.params[idx], self.names[idx]
 
-        # If supervised learning
-        if self.labels_file:
-            target_parameters = self.labels[idx]
-            return spectrum, target_parameters
 
-        # TODO: Fix unsupervised file loading
-        return spectrum, self.spectra_files[idx]
+class PyXspecLoss(nn.Module):
+    """
+    Custom loss function using PyXspec fit statistics
+
+    Attributes
+    ----------
+    device : device
+        Device type for PyTorch to use
+    model : string
+        Model to use for PyXspec
+    fix_params : ndarray
+        Parameter number & value of fixed parameters
+    param_limits : tensor
+        Parameter lower & upper limits
+
+    Methods
+    -------
+    forward(params)
+        Calculates PyXspec loss from fit statistic
+    backward(grad)
+        Returns upstream gradient to allow backpropagation
+    """
+    def __init__(self, device: torch.device, model: str, fix_params: np.ndarray):
+        """
+        Parameters
+        ----------
+        device : device
+            Device type for PyTorch to use
+        model : string
+            Model to use for PyXspec
+        fix_params : ndarray
+            Parameter number & value of fixed parameters
+        """
+        super().__init__()
+        self.device = device
+        self.fix_params = fix_params
+        self.model = xspec.Model(model)
+        self.param_limits = torch.empty((0, 2)).to(device)
+        xspec.AllModels.setEnergies('0.002 500 1000 log')
+        xspec.Fit.statMethod = 'pgstat'
+
+        # Generate parameter limits
+        for j in range(self.model.nParameters):
+            if j + 1 not in fix_params[:, 0]:
+                limits = torch.tensor(self.model(j + 1).values).to(device)[[2, 5]]
+                self.param_limits = torch.vstack((self.param_limits, limits))
+
+    def forward(self, params: Tensor) -> Tensor:
+        """
+        Forward function of PyXspec loss
+        Parameters
+        ----------
+        params : tensor
+            Parameter predictions from CNN
+        Returns
+        -------
+        tensor
+            Loss value
+        """
+        params = params.detach().cpu().numpy()
+
+        # Merge fixed & free parameters
+        fix_params_index = self.fix_params[0] - np.arange(self.fix_params.shape[1])
+        params = np.insert(params, fix_params_index, self.fix_params[1])
+
+        # Update model parameters
+        self.model.setPars(params.tolist())
+
+        # Calculate fit statistic loss
+        return torch.tensor(xspec.Fit.statistic, requires_grad=True).to(self.device)
+
+    def backward(self, grad: Tensor) -> Tensor:
+        """
+        Backpropagation function returning upstream gradient
+
+        Parameters
+        ----------
+        grad : Tensor
+            Upstream gradient
+        Returns
+        -------
+        tensor
+            Gradient of PyXspec loss function
+        """
+        return grad * torch.ones(self.param_limits.size(0), requires_grad=True).to(self.device)
 
 
 class CNN(nn.Module):
@@ -74,8 +151,8 @@ class CNN(nn.Module):
 
     Attributes
     ----------
-    model : str
-        Model(s) for PyXspec to use
+    model : XspecModel
+        PyXspec model
     conv1 : nn.Sequential
         First convolutional layer
     conv2 : nn.Sequential
@@ -88,12 +165,12 @@ class CNN(nn.Module):
     forward(x)
         Forward pass of CNN
     """
-    def __init__(self, model: str, spectra_size: int, parameters: int):
+    def __init__(self, model: PyXspecLoss, spectra_size: int, parameters: int):
         """
         Parameters
         ----------
-        model : str
-            Model(s) for PyXspec to use
+        model : XspecModel
+            PyXspec model
         spectra_size : int
             number of data points in spectra
         parameters : int
@@ -165,14 +242,15 @@ def progress_bar(i: int, total: int):
 # TODO: Is calculating loss manually faster
 # TODO: Does this work with PyTorch?
 # TODO: Load multiple spectra at once
-def pyxspec_loss(
+def unsupervised_loss(
         device: torch.device,
         names: list[str],
-        model: str,
-        params: torch.Tensor) -> torch.Tensor:
+        model: PyXspecLoss,
+        params: torch.Tensor,
+        weight: float = 1) -> torch.Tensor:
     """
-    Custom loss function using PyXspec to calculate statistic
-    for Poisson data and Gaussian background (PGStat)
+    Custom loss function using PyXspec to calculate statistic for Poisson data
+    and Gaussian background (PGStat) and L1 loss for parameters that exceed limits
 
     params
     ----------
@@ -180,52 +258,50 @@ def pyxspec_loss(
         Device type for PyTorch to use
     names : list[string]
         Spectra names
-    model : string
-        Model name(s) for PyXspec to use
+    model : XspecModel
+        PyXspec model
     params : tensor
         Output from CNN of parameter predictions between 0 & 1
+    weight : float, default = 1
+        relative weight of parameter loss to PyXspec loss
 
     Returns
     -------
     tensor
         Average PGStat loss
     """
-    loss = []
+    spectra = ''
+    loss = torch.tensor(0.).to(device)
 
     # Loop through each spectrum in the batch
     for i, name in enumerate(names):
-        spectrum_loss = 0
+        # Parameter L1 loss function if parameter exceeds limit
+        param_loss = torch.sum(torch.abs(
+            nn.ReLU()(model.param_limits[:, 0] - params[i]) +
+            nn.ReLU()(params[i] - model.param_limits[:, 1])
+        ))
 
-        # Load spectrum + background & response files
-        Spectrum(name)
+        # Limit parameters
+        param_min = model.param_limits[:, 0] + 1e-6 * (
+                model.param_limits[:, 1] - model.param_limits[:, 0])
+        param_max = model.param_limits[:, 1] - 1e-6 * (
+                model.param_limits[:, 1] - model.param_limits[:, 0])
 
-        # Create model of diskbb + pow
-        xspec_model = Model(model)
+        params = torch.clip(params, min=param_min, max=param_max)
 
-        # Adjust CNN output from 0-1 range to parameter limits range
-        for j in range(xspec_model.nparams):
-            param_min = xspec_model(j + 1).values[2]
-            param_max = xspec_model(j + 1).values[5]
+        xspec.Spectrum(name)
 
-            # Check parameter limits and if exceeded, use L1 loss and set parameter within limit
-            if params[i, j] >= param_max:
-                spectrum_loss += abs(params[i, j] - param_max)
-                params[i, j] = param_max - 1e6 * abs(param_max)
-            elif params[i, j] <= param_min:
-                spectrum_loss += abs(params[i, j] - param_min)
-                params[i, j] = param_min + 1e6 * abs(param_min)
+        loss += model(params[i]) + weight * param_loss
 
-        # Update model params and get PGStat
-        xspec_model.setPars(params[i].tolist())
-        Fit.statMethod = 'pgstat'
-        spectrum_loss += Fit.statistic
-        loss.append(spectrum_loss)
-        AllData.clear()
+        spectra += f'{i + 1}:{i + 1} ' + name + ' '
 
         progress_bar(i, len(names))
 
+        xspec.AllData.clear()
+    # xspec.AllData(spectra)
+
     # Average loss of batch
-    return torch.mean(torch.tensor(loss, requires_grad=True, dtype=float).to(device))
+    return loss / len(names)
 
 
 def train(
@@ -234,6 +310,7 @@ def train(
         loader: DataLoader,
         cnn: CNN,
         optimizer: torch.optim.Optimizer,
+        supervised: bool = True,
         dirs: list[str] = None):
     """
     Trains the CNN on spectra data either supervised or unsupervised
@@ -250,6 +327,8 @@ def train(
         Model to use for training
     optimizer : optimizer
         Optimisation method to use for training
+    supervised : boolean, default = true
+        Whether to use supervised learning
     dirs : list[string], default = None
         Directory of project & dataset files
     """
@@ -261,22 +340,20 @@ def train(
     for epoch in range(num_epochs):
         for i, data in enumerate(loader):
             # Fetch data for training
-            spectra, labels = data
+            spectra, target_params, names = data
             spectra = spectra.to(device)
-
-            if isinstance(labels, torch.Tensor):
-                labels = labels.to(device)
+            target_params = target_params.to(device)
 
             # Pass data through CNN
             spectra = torch.unsqueeze(spectra.to(device=device, dtype=torch.float), dim=1)
             output = cnn(spectra)
 
             # Calculate loss
-            if isinstance(labels, torch.Tensor):
-                loss = nn.CrossEntropyLoss()(output, labels)
+            if supervised:
+                loss = nn.CrossEntropyLoss()(output, target_params)
             else:
                 os.chdir(dirs[1])
-                loss = pyxspec_loss(device, labels, cnn.model, output)
+                loss = unsupervised_loss(device, names, cnn.model, output)
                 os.chdir(dirs[0])
 
             # Optimise CNN
@@ -284,6 +361,7 @@ def train(
             loss.backward()
             optimizer.step()
 
+            print(f'{loss.item():.3e}')
             if (i + 1) % int(len(loader) / print_num_epoch) == 0 or i + 1 == len(loader):
                 print(f'Epoch [{epoch + 1}/{num_epochs}]\t'
                       f'Step [{i + 1}/{len(loader)}]\t'
@@ -291,7 +369,7 @@ def train(
                       f'Time: {time() - t_initial:.1f}')
 
 
-def test(device: torch.device, loader: DataLoader, cnn: CNN, dirs: list[str] = None):
+def test(device: torch.device, loader: DataLoader, cnn: CNN, dirs: list[str]):
     """
     Tests the CNN on spectra data either supervised or unsupervised
 
@@ -303,7 +381,7 @@ def test(device: torch.device, loader: DataLoader, cnn: CNN, dirs: list[str] = N
         PyTorch DataLoader that contains data to train
     cnn : CNN
         Model to use for training
-    dirs : list[string], default = None
+    dirs : list[string]
         Directory of project & dataset files
     """
     loss = 0
@@ -312,24 +390,17 @@ def test(device: torch.device, loader: DataLoader, cnn: CNN, dirs: list[str] = N
     with torch.no_grad():
         for data in loader:
             # Fetch data for testing
-            spectra, labels = data
+            spectra, _, names = data
             spectra = spectra.to(device)
-
-            if isinstance(labels, torch.Tensor):
-                labels = labels.to(device)
 
             # Pass data through CNN
             spectra = torch.unsqueeze(spectra.to(device=device, dtype=torch.float), dim=1)
             output = cnn(spectra)
 
             # Calculate loss
-            # TODO: Quantitative loss
-            if isinstance(labels, torch.Tensor):
-                loss += nn.CrossEntropyLoss()(output, labels)
-            else:
-                os.chdir(dirs[1])
-                loss += pyxspec_loss(device, labels, cnn.model, output)
-                os.chdir(dirs[0])
+            os.chdir(dirs[1])
+            loss += unsupervised_loss(device, names, cnn.model, output)
+            os.chdir(dirs[0])
 
     print(f'Average loss: {loss / len(loader):.2e}')
 
@@ -340,14 +411,18 @@ def main():
     """
     # Initialize variables
     num_epochs = 20
-    Xset.chatter = 0
-    Xset.logChatter = 0
     val_frac = 0.1
-    # torch.manual_seed(3)
+    torch.manual_seed(3)
     root_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = '../../Documents/Nicer_Data/ethan'
     spectra_path = './data/preprocessed_spectra.npy'
     labels_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
+    fix_params = np.array([[4, 0], [5, 100]])
+
+    # Xspec initialization
+    xspec.Xset.chatter = 0
+    xspec.Xset.logChatter = 0
+    xspec.AllModels.lmod('simplcutx', dirPath='../../Documents/Xspec_Models/simplcutx')
 
     # Set device to GPU if available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -364,15 +439,23 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=128, shuffle=True, **kwargs)
 
     # Initialise the CNN
-    # TODO: Change model
-    cnn = CNN('diskbb + pow', dataset[0][0].size(dim=0), dataset[0][1].size(dim=0))
+    model = PyXspecLoss(device, 'tbabs(simplcutx(ezdiskbb))', fix_params)
+    cnn = CNN(model, dataset[0][0].size(dim=0), dataset[0][1].size(dim=0))
     cnn.to(device)
     optimizer = optim.Adam(cnn.parameters(), lr=0.001)
 
     # Train & validate CNN
-    test(device, val_loader, cnn)
-    train(device, num_epochs, train_loader, cnn, optimizer, [root_dir, data_dir])
-    test(device, val_loader, cnn)
+    test(device, val_loader, cnn, [root_dir, data_dir])
+    train(
+        device,
+        num_epochs,
+        train_loader,
+        cnn,
+        optimizer,
+        supervised=False,
+        dirs=[root_dir, data_dir]
+    )
+    test(device, val_loader, cnn, [root_dir, data_dir])
 
 
 if __name__ == '__main__':
