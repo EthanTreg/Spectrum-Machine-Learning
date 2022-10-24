@@ -2,6 +2,7 @@
 import os
 from time import time
 from typing import Type
+from multiprocessing import Process, Queue, Value
 
 import xspec
 import torch
@@ -307,26 +308,30 @@ def progress_bar(i: int, total: int):
 # TODO: Does this work with PyTorch?
 # TODO: Load multiple spectra at once
 def fit_statistic(
+        total: int,
         names: list[str],
+        params: np.ndarray,
         model: PyXspecFitting,
-        params: np.ndarray) -> float:
+        counter: Value,
+        queue: Queue):
     """
     Custom loss function using PyXspec to calculate statistic for Poisson data
     and Gaussian background (PGStat) and L1 loss for parameters that exceed limits
 
     params
     ----------
+    total : int
+        Total number of spectra
     names : list[string]
         Spectra names
-    model : XspecModel
-        PyXspec model
-    params : tensor
+    params : ndarray
         Output from CNN of parameter predictions between 0 & 1
-
-    Returns
-    -------
-    tensor
-        Average PGStat loss
+    model : Model
+        PyXspec model
+    counter : Value
+        Number of spectra fitted
+    queue : Queue
+        Multiprocessing queue to add PGStat loss
     """
     loss = 0
 
@@ -346,10 +351,13 @@ def fit_statistic(
 
         xspec.AllData.clear()
 
-        progress_bar(i, len(names))
+        with counter.get_lock():
+            counter.value += 1
+
+        progress_bar(counter.value, total)
 
     # Average loss of batch
-    return loss / len(names)
+    queue.put(loss / len(names))
 
 
 def network_initialisation(
@@ -488,23 +496,52 @@ def test(
     loss = 0
     cnn.eval()
 
+    if isinstance(cnn, Encoder):
+        counter = Value('i', 0)
+        os.chdir(dirs[1])
+        queue = Queue()
+        loader_output = next(enumerate(loader))[1]
+        batch = loader_output[0].size(0)
+        outputs = torch.empty((0, loader_output[1].size(1)))
+
     with torch.no_grad():
-        for i, (spectra, params, names) in enumerate(loader):
+        for spectra, params, _ in loader:
             spectra = spectra.to(device)
 
             # Generate predictions and loss
             if isinstance(cnn, Encoder):
-                os.chdir(dirs[1])
                 output = cnn(spectra)
                 output[:, log_params] = 10 ** output[:, log_params]
-                loss += fit_statistic(names, cnn.model, output.cpu().numpy())
-                os.chdir(dirs[0])
-
-                print(f'Progress: {i + 1} / {len(loader)} {((i + 1) / len(loader)) * 100:.1f} %')
+                outputs = torch.vstack((outputs, output))
             else:
                 params = params.to(device)
                 output = cnn(params)
                 loss += nn.MSELoss()(output, spectra).item()
+
+    if isinstance(cnn, Encoder):
+        processes = [Process(
+            target=fit_statistic,
+            args=(
+                len(loader.dataset),
+                data[2],
+                outputs[batch * i:batch * (i + 1)],
+                cnn.model,
+                counter,
+                queue
+            )
+        ) for i, data in enumerate(loader)]
+
+        for process in processes:
+            process.start()
+
+        for process in processes:
+            process.join()
+
+        losses = [queue.get() for _ in processes]
+
+        os.chdir(dirs[0])
+
+        return sum(losses) / len(losses)
 
     return loss / len(loader)
 
@@ -566,8 +603,8 @@ def main():
         # test(device, d_val_loader, decoder, [root_dir, data_dir])
         # losses = train(device, num_epochs, d_train_loader, decoder, d_optimizer)
         # test(device, d_val_loader, decoder, [root_dir, data_dir])
-        train_loss.append(train(device, e_train_loader, encoder, e_optimizer))
         val_loss.append(test(log_params, device, e_val_loader, encoder, [root_dir, data_dir]))
+        train_loss.append(train(device, e_train_loader, encoder, e_optimizer))
 
         print(f'Epoch [{epoch + 1}/{num_epochs}]\t'
               f'Training loss: {train_loss[-1]:.3e}\t'
