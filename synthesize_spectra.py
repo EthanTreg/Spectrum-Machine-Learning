@@ -55,54 +55,32 @@ def initialise_xspec(model_type: str = 'tbabs(simplcutx(ezdiskbb))') -> xspec.Mo
     return model
 
 
-def existing_synth(new_synth_num: int, synth_dir: str, clear_synth: bool = True) -> int:
+def delete_synth(synth_dir: str, synth_data: str):
     """
     Either clears existing synthetic spectra or
     renames and counts the number of existing synthetic spectra
 
     Parameters
     ----------
-    new_synth_num : int
-        Number of new synthetic spectra to be created
     synth_dir : string
         Directory of synthetic spectra
-    clear_synth : boolean, default = True
-        If the existing data should be cleared or preserved
-
-    Returns
-    -------
-    integer
-        Number of existing synthetic spectra
+    synth_data : string
+        File path to save synthetic spectra data
     """
-    if clear_synth:
-        # Clear all existing synthetic spectra
-        for synth in os.listdir(synth_dir):
-            os.remove(synth_dir + synth)
+    # Clear all existing synthetic spectra
+    for synth in os.listdir(synth_dir):
+        os.remove(synth_dir + synth)
 
-        return 0
-
-    # Find existing synthetic spectra names
-    synth_names = np.sort(np.array(os.listdir(synth_dir)))
-    synth_names = np.delete(synth_names, np.char.find(synth_names, '_bkg') != -1)
-
-    # Rename each synthetic spectra so spectrum number is correct
-    for i, synth in enumerate(synth_names):
-        os.rename(
-            synth_dir + synth,
-            f'{synth_dir}synth_{i:0{int(np.log10(new_synth_num)) + 1}d}.fits'
-        )
-        os.rename(
-            synth_dir + synth[:-5] + '_bkg.fits',
-            f'{synth_dir}synth_{i:0{int(np.log10(new_synth_num)) + 1}d}_bkg.fits'
-        )
-
-    return int(len(os.listdir(synth_dir)) / 2)
+    if os.path.exists(synth_data):
+        os.remove(synth_data)
+        os.remove(synth_data[:-4] + '_params.npy')
 
 
 def generate_synth(current_num: int,
                    synth_num: int,
                    synth_dir: str,
                    param_limits: list[dict],
+                   model: xspec.Model,
                    exposure: float = 1e3) -> np.ndarray:
     """
     Generates synthetic spectra using PyXspec
@@ -117,6 +95,8 @@ def generate_synth(current_num: int,
         Directory of synthetic spectra
     param_limits : list[dictionary]
         Parameter ID, limits and if logarithmic space should be used
+    model : Model
+        Xspec model to be used
     exposure : float, default = 1000
         Exposure time of synthetic spectra
 
@@ -127,10 +107,9 @@ def generate_synth(current_num: int,
     """
     data_dir = '../../Documents/Nicer_Data/ethan/'
     labels_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
-    synth_params = []
-    params = {1: 0, 2: 0, 3: 0, 4: 0, 5: 100, 6: 0, 7: 0}
-
-    model = initialise_xspec()
+    fixed_params = {4: 0, 5: 100}
+    params = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0} | fixed_params
+    synth_params = np.empty((0, len(params) - len(fixed_params)))
 
     for i in range(synth_num):
         # Choose spectrum to base synthetic off
@@ -153,7 +132,13 @@ def generate_synth(current_num: int,
                 params[param['id']] = np.random.uniform(param['low'], param['high'])
 
         model.setPars(params)
-        synth_params.append(params)
+        synth_params = np.vstack((
+            synth_params,
+            np.delete(
+                np.fromiter(params.values(), dtype=float),
+                np.fromiter(fixed_params.keys(), dtype=int)
+            )
+        ))
 
         # Generate fake spectrum
         fake_setting = xspec.FakeitSettings(
@@ -167,10 +152,15 @@ def generate_synth(current_num: int,
         xspec.AllData.fakeit(1, fake_setting)
         progress_bar(i, synth_num)
 
-    return np.vstack(synth_params)
+    return synth_params
 
 
-def clean_synth(current_num: int, synth_dir: str, params: np.ndarray):
+def clean_synth(
+        current_num: int,
+        synth_dir: str,
+        synth_data: str,
+        params: np.ndarray,
+        min_counts: float = 1) -> int:
     """
     Remove bad synthetic spectra
 
@@ -180,10 +170,20 @@ def clean_synth(current_num: int, synth_dir: str, params: np.ndarray):
         Number of existing synthetic spectra
     synth_dir : string
         Directory of synthetic spectra
+    synth_data : string
+        File path to save synthetic spectra data
     params : ndarray
         Synthetic params to clean
+    min_counts : float
+        Minimum number of counts to be accepted
+
+    Returns
+    -------
+    integer
+        Number of successful spectra
     """
     synth = []
+    detectors = np.array(())
 
     # Retrieve synthetic spectra names
     synth_names = np.sort(np.array(os.listdir(synth_dir)))
@@ -191,34 +191,76 @@ def clean_synth(current_num: int, synth_dir: str, params: np.ndarray):
         synth_names,
         np.char.find(synth_names, '_bkg') != -1
     )[current_num:]
-
     synth_num = synth_names.size
 
     # Retrieve synthetic spectra data
     for i, spectrum in enumerate(synth_names):
-        synth.append(spectrum_data(synth_dir + spectrum, '')[1])
+        _, synth_spectrum, detector = spectrum_data(synth_dir + spectrum, '')
+        synth.append(synth_spectrum)
+        detectors = np.append(detectors, detector)
         progress_bar(i, synth_num)
 
     synth = np.vstack(synth)
 
     # Find synthetic spectra that has integer overflow errors or S/N is too low
-    max_counts = np.max(np.abs(synth), axis=1)
+    max_counts = np.max(np.abs(synth), axis=1) * detectors
     overflow = np.argwhere(np.min(synth, axis=1) < 0)[:, 0]
-    bad_indices = np.unique(np.append(overflow, np.argwhere(max_counts < 1e1)[:, 0]))
+    bad_indices = np.unique(np.append(overflow, np.argwhere(max_counts < min_counts)))
 
     # Remove bad synthetic spectra
     for bad_synth in bad_indices:
         os.remove(synth_dir + synth_names[bad_synth])
         os.remove(synth_dir + synth_names[bad_synth][:-5] + '_bkg.fits')
 
+    synth = np.delete(synth, bad_indices, axis=0)
+    params = np.delete(params, bad_indices, axis=0)
+
     # Save synthetic spectra data to file
-    np.save('./data/synth_spectra', np.delete(synth, bad_indices, axis=0))
-    np.save('./data/synth_spectra_params', np.delete(params, bad_indices))
-    print(
-        f'Spectra success: '
-        f'{synth_num - bad_indices.size} / {synth_num} '
-        f'{((synth_num - bad_indices.size) / synth_num) * 100:.1f}%'
-    )
+    if os.path.exists(synth_data):
+        synth = np.vstack((np.load(synth_data), synth))
+        params = np.append(np.load(synth_data[:-4] + '_params.npy', allow_pickle=True), params)
+
+    np.save(synth_data, synth)
+    np.save(synth_data[:-4] + '_params.npy', params)
+
+    return synth_num - bad_indices.size
+
+
+def fix_names(current_num: int, synth_num: int, synth_dir: str):
+    """
+    Fix names of synthetic spectra to be in order
+
+    Parameters
+    ----------
+    current_num : integer
+        Number of existing synthetic spectra
+    synth_num : integer
+        Number of new synthetic spectra to be created
+    synth_dir : string
+        Directory of synthetic spectra
+    """
+    # Find existing synthetic spectra names
+    synth_names = np.sort(np.array(os.listdir(synth_dir)))
+    synth_names = np.delete(synth_names, np.char.find(synth_names, '_bkg') != -1)
+
+    if synth_names.size > synth_num:
+        synth_num = synth_names.size
+
+    synth_names = synth_names[current_num:]
+
+    # Rename each synthetic spectra so spectrum number is correct
+    for i, synth in enumerate(synth_names):
+        new_synth = f'{synth_dir}synth_{i + current_num:0{int(np.log10(synth_num)) + 1}d}.fits'
+        new_background = new_synth[:-5] + '_bkg.fits'
+
+        with fits.open(synth_dir + synth, mode='update') as f:
+            f[1].header['BACKFILE'] = new_background
+            f.flush()
+
+        os.rename(synth_dir + synth, new_synth)
+        os.rename(synth_dir + synth[:-5] + '_bkg.fits', new_background)
+
+        progress_bar(i, synth_names.size)
 
 
 def main():
@@ -227,8 +269,11 @@ def main():
     """
     # Initialize variables
     clear_synth = True
-    synth_num = int(1e2)
+    batches = 1
+    total_synth_num = int(1e1)
+    success = 0
     synth_dir = './data/synth_spectra/'
+    synth_data = './data/synth_spectra.npy'
     param_limits = [
         {'id': 1, 'low': 5e-3, 'high': 75, 'log': True},
         {'id': 2, 'low': 1.3, 'high': 4, 'log': False},
@@ -236,14 +281,42 @@ def main():
         {'id': 6, 'low': 2.5e-2, 'high': 4, 'log': True},
         {'id': 7, 'low': 1e-2, 'high': 1e10, 'log': True},
     ]
+    model = initialise_xspec()
 
-    current_num = existing_synth(synth_num, synth_dir, clear_synth)
+    if not os.path.exists(synth_dir):
+        os.makedirs(synth_dir)
 
-    # Generate synthetic spectra
-    params = generate_synth(current_num, synth_num, synth_dir, param_limits)
+    # Manage existing synthetic spectra
+    if clear_synth:
+        delete_synth(synth_dir, synth_data)
 
-    # Remove bad synthetic spectra
-    clean_synth(current_num, synth_dir, params)
+    for i in range(batches):
+        synth_num = int(total_synth_num / batches)
+        current_num = int(len(os.listdir(synth_dir)) / 2)
+
+        if i == batches - 1:
+            synth_num += total_synth_num % batches
+
+        # Generate synthetic spectra
+        print('\nGenerating synthetic spectra...')
+        params = generate_synth(current_num, synth_num, synth_dir, param_limits, model)
+
+        # Remove bad synthetic spectra
+        print('\nRemoving bad synthetic spectra...')
+        success += clean_synth(current_num, synth_dir, synth_data, params)
+
+        if success != current_num:
+            # Rename synthetic spectra in order
+            print('\nRenaming synthetic spectra...')
+            fix_names(current_num, total_synth_num, synth_dir)
+
+        print(f'\nBatch {i + 1} / {batches} {((i + 1) / batches) * 100:.1f} %')
+
+    print(
+        f'\n\nSpectra success: '
+        f'{success} / {total_synth_num} '
+        f'{(success / total_synth_num) * 100:.1f} %'
+    )
 
 
 if __name__ == '__main__':

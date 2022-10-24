@@ -103,7 +103,10 @@ def spectra_names(data_dir: str) -> np.ndarray:
     return np.delete(all_files, np.char.find(all_files, '.jsgrp') == -1)
 
 
-def spectrum_data(spectrum_path: str, background_dir: str, cut_off: list = None) -> np.ndarray:
+def spectrum_data(
+        spectrum_path: str,
+        background_dir: str,
+        cut_off: list = None) -> tuple[np.ndarray, np.ndarray, int]:
     """
     Fetches binned data from spectrum
 
@@ -120,8 +123,8 @@ def spectrum_data(spectrum_path: str, background_dir: str, cut_off: list = None)
 
     Returns
     -------
-    ndarray, shape=(2, N)
-        Binned spectrum data
+    (ndarray, ndarray, int)
+        Binned spectrum data and number of detectors
     """
     # Initialize variables
     x_bin = np.array(())
@@ -169,7 +172,7 @@ def spectrum_data(spectrum_path: str, background_dir: str, cut_off: list = None)
     x_bin = np.delete(x_bin, cut_indices)
     y_bin = np.delete(y_bin, cut_indices)
 
-    return np.array((x_bin, y_bin))
+    return x_bin, y_bin, detectors
 
 
 def preprocess():
