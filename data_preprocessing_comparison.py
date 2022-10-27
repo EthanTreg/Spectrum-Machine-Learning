@@ -1,6 +1,9 @@
+import os
+
 import numpy as np
 from xspec import Spectrum, Plot
 from matplotlib import pyplot as plt
+
 from data_preprocessing import spectrum_data
 
 
@@ -70,14 +73,16 @@ def main():
     """
     Main function for preprocessing the data
     """
-    # Initialize variables
+    # Variables
     plot_diff = True
-    # spectrum = 'js_ni2101010101_0mpu7_goddard_GTI0.jsgrp'
-    # spectra = 'js_ni0001020103_0mpu7_goddard_GTI0.jsgrp'
+    data_root = ''
     spectrum = './data/synth_spectra/synth_03.fits'
 
+    # Constant
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+
     # PyXspec data & plotting
-    # os.chdir('./data/')
+    os.chdir(data_root)
     Spectrum(spectrum)
     Plot.device = '/NULL'
     Plot.xAxis = 'keV'
@@ -85,13 +90,13 @@ def main():
     # Plot.addCommand('rescale x 0.15 15')
     # Plot.addCommand('rescale y 1e-3 60')
     Plot('data')
-    # os.chdir('../')
+    os.chdir(root_dir)
 
     # PyXspec data
     x_px = np.array(Plot.x())[:-1]
     y_px = np.array(Plot.y())[:-1] / 49
 
-    x_bin, y_bin = spectrum_data(spectrum, '')
+    x_bin, y_bin, _ = spectrum_data(spectrum, '')
 
     # Pyplot plotting of binned fits data & PyXspec data
     if plot_diff:

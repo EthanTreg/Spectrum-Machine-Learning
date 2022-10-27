@@ -1,5 +1,7 @@
 # TODO: Does passing orbit information help with accuracy?
 import os
+from time import time
+
 import xspec
 import numpy as np
 from astropy.io import fits
@@ -105,6 +107,7 @@ def generate_synth(current_num: int,
     ndarray
         Synthetic params
     """
+    load_frequency = 100
     data_dir = '../../Documents/Nicer_Data/ethan/'
     labels_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
     fixed_params = {4: 0, 5: 100}
@@ -112,15 +115,25 @@ def generate_synth(current_num: int,
     synth_params = np.empty((0, len(params) - len(fixed_params)))
 
     for i in range(synth_num):
-        # Choose spectrum to base synthetic off
-        spectrum = np.random.choice(np.loadtxt(labels_path, skiprows=6, usecols=6, dtype=str))
-
         # Retrieve background and response spectrum
-        with fits.open(data_dir + spectrum) as f:
-            spectrum_info = f[1].header
-            background = data_dir + spectrum_info['BACKFILE']
-            response = data_dir + spectrum_info['RESPFILE']
-            aux = data_dir + spectrum_info['ANCRFILE']
+        if i % load_frequency == 0:
+            # Choose spectrum to base synthetic off
+            spectrum = np.random.choice(np.loadtxt(labels_path, skiprows=6, usecols=6, dtype=str))
+            xspec.AllData.clear()
+
+            with fits.open(data_dir + spectrum) as f:
+                spectrum_info = f[1].header
+                background = data_dir + spectrum_info['BACKFILE']
+                response = data_dir + spectrum_info['RESPFILE']
+                aux = data_dir + spectrum_info['ANCRFILE']
+
+            # Generate base fake settings
+            fake_base = xspec.FakeitSettings(
+                response=response,
+                arf=aux,
+                background=background,
+                exposure=exposure
+            )
 
         # Generate random model parameters for synthetic spectrum
         for param in param_limits:
@@ -136,18 +149,14 @@ def generate_synth(current_num: int,
             synth_params,
             np.delete(
                 np.fromiter(params.values(), dtype=float),
-                np.fromiter(fixed_params.keys(), dtype=int)
+                np.fromiter(fixed_params.keys(), dtype=int) - 1
             )
         ))
 
         # Generate fake spectrum
-        fake_setting = xspec.FakeitSettings(
-            response=response,
-            arf=aux,
-            background=background,
-            exposure=exposure,
-            fileName=f'{synth_dir}synth_{i + current_num:0{int(np.log10(synth_num)) + 1}d}.fits'
-        )
+        fake_setting = xspec.FakeitSettings(fake_base)
+        fake_setting.fileName = \
+            f'{synth_dir}synth_{i + current_num:0{int(np.log10(synth_num)) + 1}d}.fits'
 
         xspec.AllData.fakeit(1, fake_setting)
         progress_bar(i, synth_num)
@@ -195,7 +204,7 @@ def clean_synth(
 
     # Retrieve synthetic spectra data
     for i, spectrum in enumerate(synth_names):
-        _, synth_spectrum, detector = spectrum_data(synth_dir + spectrum, '')
+        _, synth_spectrum, detector = spectrum_data(synth_dir + spectrum)
         synth.append(synth_spectrum)
         detectors = np.append(detectors, detector)
         progress_bar(i, synth_num)
@@ -218,7 +227,7 @@ def clean_synth(
     # Save synthetic spectra data to file
     if os.path.exists(synth_data):
         synth = np.vstack((np.load(synth_data), synth))
-        params = np.append(np.load(synth_data[:-4] + '_params.npy', allow_pickle=True), params)
+        params = np.vstack((np.load(synth_data[:-4] + '_params.npy'), params))
 
     np.save(synth_data, synth)
     np.save(synth_data[:-4] + '_params.npy', params)
@@ -267,11 +276,10 @@ def main():
     """
     Main function for generating synthesized data
     """
-    # Initialize variables
-    clear_synth = True
-    batches = 1
-    total_synth_num = int(1e1)
-    success = 0
+    # Variables
+    clear_synth = False
+    batches = 1000
+    total_synth_num = 1e5
     synth_dir = './data/synth_spectra/'
     synth_data = './data/synth_spectra.npy'
     param_limits = [
@@ -281,6 +289,10 @@ def main():
         {'id': 6, 'low': 2.5e-2, 'high': 4, 'log': True},
         {'id': 7, 'low': 1e-2, 'high': 1e10, 'log': True},
     ]
+
+    # Constant
+    success = 0
+
     model = initialise_xspec()
 
     if not os.path.exists(synth_dir):
@@ -290,7 +302,9 @@ def main():
     if clear_synth:
         delete_synth(synth_dir, synth_data)
 
+    # TODO: Multiprocessing
     for i in range(batches):
+        t_initial = time()
         synth_num = int(total_synth_num / batches)
         current_num = int(len(os.listdir(synth_dir)) / 2)
 
@@ -310,13 +324,10 @@ def main():
             print('\nRenaming synthetic spectra...')
             fix_names(current_num, total_synth_num, synth_dir)
 
-        print(f'\nBatch {i + 1} / {batches} {((i + 1) / batches) * 100:.1f} %')
-
-    print(
-        f'\n\nSpectra success: '
-        f'{success} / {total_synth_num} '
-        f'{(success / total_synth_num) * 100:.1f} %'
-    )
+        print(f'\nBatch {i + 1} / {batches} {((i + 1) / batches) * 100:.1f} %'
+              f'\tSuccess: {success} / {total_synth_num * i / batches}'
+              f'{100 * success * batches / (total_synth_num * i):.1f} %'
+              f'\tTime: {time() - t_initial:.2f} s')
 
 
 if __name__ == '__main__':

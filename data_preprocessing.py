@@ -105,7 +105,7 @@ def spectra_names(data_dir: str) -> np.ndarray:
 
 def spectrum_data(
         spectrum_path: str,
-        background_dir: str,
+        background_dir: str = '',
         cut_off: list = None) -> tuple[np.ndarray, np.ndarray, int]:
     """
     Fetches binned data from spectrum
@@ -116,7 +116,7 @@ def spectrum_data(
     ----------
     spectrum_path : string
         File path to the spectrum
-    background_dir : string
+    background_dir : string, default = ''
         Path to the root directory where the background is located
     cut_off : list, default = [0.3, 10]
         Range of accepted data in keV

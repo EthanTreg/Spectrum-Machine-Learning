@@ -1,4 +1,3 @@
-# TODO: Does log x affect results?
 import os
 from time import time
 from typing import Type
@@ -8,6 +7,7 @@ import xspec
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 from torch import nn
 from torch import optim, Tensor
 from torch.utils.data import Dataset, DataLoader, random_split
@@ -26,7 +26,7 @@ class SpectrumDataset(Dataset):
     names : ndarray
         Names of each spectrum
     """
-    def __init__(self, data_file: str, labels_file: str, log_params: list[int]):
+    def __init__(self, data_file: str, labels_file: str, param_limits: dict):
         """
         Parameters
         ----------
@@ -34,20 +34,28 @@ class SpectrumDataset(Dataset):
             Path to the file with the spectra dataset
         labels_file : str
             Path to the labels file, if none, then an unsupervised approach is used
-        log_params : list[integer]
-            Indices for parameters in logarithmic space
+        param_limits : dictionary
+            Limits for each parameter and if it is in logarithmic space
         """
         self.spectra = torch.from_numpy(np.load(data_file)).float()
 
         if '.npy' in labels_file:
-            self.params = torch.from_numpy(np.load(labels_file)).float()
-            self.params[:, log_params] = torch.log10(self.params[:, log_params])
-            # self.names = np.sort(np.array(os.listdir(data_file[:-4])))
+            self.params = np.load(labels_file)
             self.names = np.empty(self.spectra.size(0))
         else:
             labels = np.loadtxt(labels_file, skiprows=6, dtype=str)
-            self.params = torch.from_numpy(labels[:, 9:].astype(np.float32))
+            self.params = labels[:, 9:].astype(float)
             self.names = labels[:, 6]
+
+        # TODO: Identify good scalling method
+        # Scale parameters
+        self.params[:, param_limits['log']] = np.log10(self.params[:, param_limits['log']])
+        self.params = (self.params - np.mean(self.params, axis=0)) / np.std(self.params, axis=0)
+        # self.params = (self.params - param_limits['low']) / \
+        #               (np.array(param_limits['high']) - param_limits['low'])
+        # self.params = 2 * (self.params - param_limits['low']) / \
+        #               (np.array(param_limits['high']) - param_limits['low']) - 1
+        self.params = torch.from_numpy(self.params).float()
 
     def __len__(self):
         return self.spectra.shape[0]
@@ -101,8 +109,12 @@ class PyXspecFitting:
         """
         super().__init__()
         self.fix_params = fix_params
-        self.model = xspec.Model(model)
         self.param_limits = np.empty((0, 2))
+
+        xspec.Xset.chatter = 0
+        xspec.Xset.logChatter = 0
+        xspec.AllModels.lmod('simplcutx', dirPath='../../Documents/Xspec_Models/simplcutx')
+        self.model = xspec.Model(model)
         xspec.AllModels.setEnergies('0.002 500 1000 log')
         xspec.Fit.statMethod = 'pgstat'
 
@@ -246,18 +258,32 @@ class Decoder(nn.Module):
         # Construct layers in CNN
         self.upscale = nn.Sequential(
             nn.Linear(in_features=model.param_limits.shape[0], out_features=64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(in_features=64, out_features=128),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(in_features=128, out_features=self.spectra_size * 4),
-            nn.ReLU(),
+            nn.BatchNorm1d(self.spectra_size * 4),
+            nn.LeakyReLU(),
         )
         self.conv1 = nn.Sequential(
-            nn.Conv1d(in_channels=4, out_channels=16, kernel_size=3, padding='same'),
-            nn.ReLU(),
+            nn.Conv1d(in_channels=4, out_channels=4, kernel_size=3, padding='same'),
+            nn.Dropout1d(0.5),
+            # nn.BatchNorm1d(16),
+            nn.LeakyReLU(),
         )
         self.conv2 = nn.Sequential(
-            nn.Conv1d(in_channels=16, out_channels=1, kernel_size=7, padding='same'),
+            nn.Conv1d(in_channels=16, out_channels=4, kernel_size=5, padding='same'),
+            nn.Dropout1d(0.5),
+            # nn.BatchNorm1d(4),
+            nn.LeakyReLU(),
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv1d(in_channels=4, out_channels=1, kernel_size=7, padding='same'),
+        )
+
+        self.conv_upscale = nn.Sequential(
+            nn.Conv1d(in_channels=4, out_channels=4, kernel_size=3, padding='same'),
+            nn.PixelShuffle(2)
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -276,9 +302,10 @@ class Decoder(nn.Module):
         """
         x = self.upscale(x)
         x = x.view(x.size(0), -1, self.spectra_size)
-        x = self.conv1(x)
-        x = torch.squeeze(self.conv2(x), dim=1)
-        return x
+        x1 = self.conv1(x)
+        # x2 = self.conv2(x + x1)
+        x3 = self.conv3(x1 + x)
+        return torch.squeeze(x3, dim=1)
 
 
 def progress_bar(i: int, total: int):
@@ -364,7 +391,7 @@ def network_initialisation(
         val_frac: float,
         synth_path: str,
         labels_path: str,
-        log_params: list[int],
+        param_limits: dict,
         kwargs: dict,
         architecture: Type[Encoder | Decoder],
         model: PyXspecFitting,
@@ -381,8 +408,8 @@ def network_initialisation(
         Path to synthetic data
     labels_path : string
         Path to labels
-    log_params : list[integer]
-        Indices of parameters in logarithmic space
+    param_limits : dictionary
+        Limits for each parameter and if it is in logarithmic space
     kwargs : dictionary
         Keyword arguments for dataloader
     architecture : Encoder | Decoder
@@ -397,10 +424,10 @@ def network_initialisation(
     tuple[Encoder | Decoder, Optimizer, DataLoader, DataLoader]
         Neural network, optimizer and dataloaders for the training and validation datasets
     """
-    learning_rate = 5e-5
+    learning_rate = 5e-4
 
     # Fetch dataset & create train & val data
-    dataset = SpectrumDataset(synth_path, labels_path, log_params)
+    dataset = SpectrumDataset(synth_path, labels_path, param_limits)
     val_amount = int(len(dataset) * val_frac)
 
     train_dataset, val_dataset = random_split(dataset, [len(dataset) - val_amount, val_amount])
@@ -414,7 +441,38 @@ def network_initialisation(
     cnn.to(device)
     optimizer = optim.Adam(cnn.parameters(), lr=learning_rate)
 
+    print(f'{cnn.__class__.__name__}:\n'
+          f'Training data size: {len(train_dataset)}\t'
+          f'Validation data size: {len(val_dataset)}\n')
+
     return cnn, optimizer, train_loader, val_loader
+
+
+def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, axes: Axes):
+    """
+    Plots reconstructions for a given epoch
+
+    Parameters
+    ----------
+    epoch : integer
+        Epoch number
+    y_data : ndarray
+        Spectrum
+    y_recon : ndarray
+        Reconstructed Spectrum
+    axes : Axes
+        Plot axes
+    """
+    x_data = np.load('./data/spectra_x_axis.npy')
+
+    axes.set_title(f'Epoch: {epoch}', fontsize=16)
+    axes.scatter(x_data, y_data, label='Spectrum')
+    axes.scatter(x_data, y_recon, label='Reconstruction')
+    axes.set_xlabel('Energy (keV)', fontsize=12)
+    axes.set_ylabel(r'Counts ($s^{-1}$ $detector^{-1}$ $keV^{-1}$)', fontsize=12)
+    axes.set_xscale('log')
+    axes.set_yscale('log')
+    axes.legend(fontsize=16)
 
 
 def train(
@@ -423,7 +481,7 @@ def train(
         cnn: Encoder | Decoder,
         optimizer: torch.optim.Optimizer) -> float:
     """
-    Trains the CNN on spectra data either supervised or unsupervised
+    Trains the encoder or decoder using cross entropy or mean squared error
 
     Parameters
     ----------
@@ -466,6 +524,46 @@ def train(
     return epoch_loss / len(loader)
 
 
+def validate(
+        device: torch.device,
+        loader: DataLoader,
+        cnn: Encoder | Decoder) -> tuple[float, np.ndarray, np.ndarray]:
+    """
+    Validates the encoder or decoder using cross entropy or mean squared error
+
+    Parameters
+    ----------
+    device : device
+        Which device type PyTorch should use
+    loader : DataLoader
+        PyTorch DataLoader that contains data to train
+    cnn : CNN
+        Model to use for training
+
+    Returns
+    -------
+    tuple[float, ndarray, ndarray]
+        Average loss value, spectra & reconstructions
+    """
+    loss = 0
+    cnn.eval()
+
+    with torch.no_grad():
+        for spectra, params, _ in loader:
+            spectra = spectra.to(device)
+            params = params.to(device)
+
+            # Generate predictions and loss
+            if isinstance(cnn, Encoder):
+                output = cnn(spectra)
+                loss += nn.CrossEntropyLoss()(output, params).item()
+            else:
+                output = cnn(params)
+                loss += nn.MSELoss()(output, spectra).item()
+
+    return loss / len(loader), spectra.cpu().numpy(), output.cpu().numpy()
+
+
 def test(
         log_params: list[int],
         device: torch.device,
@@ -473,7 +571,7 @@ def test(
         cnn: Decoder,
         dirs: list[str]) -> float:
     """
-    Tests the CNN on spectra data either supervised or unsupervised
+    Tests the encoder or decoder using PyXspec or mean squared error
 
     Parameters
     ----------
@@ -496,6 +594,7 @@ def test(
     loss = 0
     cnn.eval()
 
+    # Initialize multiprocessing variables
     if isinstance(cnn, Encoder):
         counter = Value('i', 0)
         os.chdir(dirs[1])
@@ -508,7 +607,7 @@ def test(
         for spectra, params, _ in loader:
             spectra = spectra.to(device)
 
-            # Generate predictions and loss
+            # Generate predictions and loss if network is a decoder
             if isinstance(cnn, Encoder):
                 output = cnn(spectra)
                 output[:, log_params] = 10 ** output[:, log_params]
@@ -518,6 +617,7 @@ def test(
                 output = cnn(params)
                 loss += nn.MSELoss()(output, spectra).item()
 
+    # Initialize processes for multiprocessing of encoder loss calculation
     if isinstance(cnn, Encoder):
         processes = [Process(
             target=fit_statistic,
@@ -531,12 +631,15 @@ def test(
             )
         ) for i, data in enumerate(loader)]
 
+        # Start multiprocessing
         for process in processes:
             process.start()
 
+        # End multiprocessing
         for process in processes:
             process.join()
 
+        # Collect results
         losses = [queue.get() for _ in processes]
 
         os.chdir(dirs[0])
@@ -550,35 +653,41 @@ def main():
     """
     Main function for spectrum machine learning
     """
-    # Initialize variables
-    num_epochs = 100
+    # Variables
+    num_epochs = 80
     val_frac = 0.1
-    train_loss = []
-    val_loss = []
-    root_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = '../../Documents/Nicer_Data/ethan'
     spectra_path = './data/preprocessed_spectra.npy'
     synth_path = './data/synth_spectra.npy'
-    labels_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
+    params_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
     synth_params_path = './data/synth_spectra_params.npy'
     fix_params = np.array([[4, 0], [5, 100]])
-    log_params = [0, 2, 3, 4]
+    param_limits = {
+        'low': np.array([5e-3, 1.3, 1e-3, 2.5e-2, 1e-2]),
+        'high': np.array([75, 4, 1, 4, 1e10]),
+        'log': [0, 2, 3, 4],
+    }
+
+    # Constants
+    train_loss = []
+    val_loss = []
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+
+    param_limits['low'][param_limits['log']] = np.log10(param_limits['low'][param_limits['log']])
+    param_limits['high'][param_limits['log']] = np.log10(param_limits['high'][param_limits['log']])
 
     # Xspec initialization
-    xspec.Xset.chatter = 0
-    xspec.Xset.logChatter = 0
-    xspec.AllModels.lmod('simplcutx', dirPath='../../Documents/Xspec_Models/simplcutx')
     model = PyXspecFitting('tbabs(simplcutx(ezdiskbb))', fix_params)
 
     # Set device to GPU if available
-    device = torch.device('cuda' if not torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
 
     decoder, d_optimizer, d_train_loader, d_val_loader = network_initialisation(
         val_frac,
         synth_path,
         synth_params_path,
-        log_params,
+        param_limits,
         kwargs,
         Decoder,
         model,
@@ -588,30 +697,53 @@ def main():
     encoder, e_optimizer, e_train_loader, e_val_loader = network_initialisation(
         val_frac,
         spectra_path,
-        labels_path,
-        log_params,
+        params_path,
+        param_limits,
         kwargs,
         Encoder,
         model,
         device
     )
 
+    _, axes = plt.subplots(4, 2, figsize=(24, 12), constrained_layout=True)
+    axes = axes.flatten()
+    plot_epochs = np.rint((np.arange(axes.size) + 1) * num_epochs / axes.size)
+
     # Train for each epoch
     for epoch in range(num_epochs):
         t_initial = time()
-        # Train & validate CNN
-        # test(device, d_val_loader, decoder, [root_dir, data_dir])
-        # losses = train(device, num_epochs, d_train_loader, decoder, d_optimizer)
-        # test(device, d_val_loader, decoder, [root_dir, data_dir])
-        val_loss.append(test(log_params, device, e_val_loader, encoder, [root_dir, data_dir]))
-        train_loss.append(train(device, e_train_loader, encoder, e_optimizer))
+
+        loss, spectra, _ = validate(device, d_val_loader, decoder)
+        val_loss.append(loss)
+
+        # Validate CNN
+        # if epoch in plot_epochs:
+        #     plot_reconstructions(
+        #         epoch,
+        #         spectrum,
+        #         output,
+        #         axes[np.argwhere(plot_epochs == epoch)[0, 0]]
+        #     )
+
+        # Train CNN
+        train_loss.append(train(device, d_train_loader, decoder, d_optimizer))
 
         print(f'Epoch [{epoch + 1}/{num_epochs}]\t'
               f'Training loss: {train_loss[-1]:.3e}\t'
               f'Validation loss: {val_loss[-1]:.3e}\t'
               f'Time: {time() - t_initial:.1f}')
 
-    val_loss.append(test(log_params, device, e_val_loader, encoder, [root_dir, data_dir]))
+    loss, spectra, outputs = validate(device, d_val_loader, decoder)
+    val_loss.append(loss)
+    print(f'\nFinal validation loss: {val_loss[-1]:.3e}')
+
+    if not os.path.exists('./plots'):
+        os.makedirs('./plots')
+
+    for i in range(axes.size):
+        plot_reconstructions(num_epochs, spectra[i], outputs[i], axes[i])
+
+    plt.savefig('./plots/Reconstructions.png')
 
     plt.figure(figsize=(16, 9), constrained_layout=True)
     plt.plot(train_loss, label='Training Loss')
@@ -620,7 +752,7 @@ def main():
     plt.ylabel('Loss', fontsize=18)
     plt.yscale('log')
     plt.legend(fontsize=20)
-    plt.show()
+    plt.savefig('./plots/Epoch_Loss.png')
 
 
 if __name__ == '__main__':
