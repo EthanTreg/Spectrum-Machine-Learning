@@ -12,6 +12,10 @@ from torch import nn
 from torch import optim, Tensor
 from torch.utils.data import Dataset, DataLoader, random_split
 
+# TODO: Simple data
+# TODO: Uncertainties
+# TODO: Longer training
+
 
 class SpectrumDataset(Dataset):
     """
@@ -26,18 +30,25 @@ class SpectrumDataset(Dataset):
     names : ndarray
         Names of each spectrum
     """
-    def __init__(self, data_file: str, labels_file: str, param_limits: dict):
+    def __init__(self, data_file: str, labels_file: str, log_params: list):
         """
         Parameters
         ----------
-        data_file : str
+        data_file : string
             Path to the file with the spectra dataset
-        labels_file : str
+        labels_file : string
             Path to the labels file, if none, then an unsupervised approach is used
-        param_limits : dictionary
-            Limits for each parameter and if it is in logarithmic space
+        log_params : list
+            Index of each free parameter in logarithmic space
         """
-        self.spectra = torch.from_numpy(np.load(data_file)).float()
+        # self.spectra = torch.from_numpy(np.load(data_file)).float()
+        self.spectra = torch.from_numpy(np.log10(np.maximum(1e-8, np.load(data_file)))).float()
+
+        if self.spectra.size(1) % 2 != 0:
+            self.spectra = torch.cat((
+                self.spectra[:, :-2],
+                torch.mean(self.spectra[:, -2:], dim=1, keepdim=True)
+            ), dim=1)
 
         if '.npy' in labels_file:
             self.params = np.load(labels_file)
@@ -47,14 +58,9 @@ class SpectrumDataset(Dataset):
             self.params = labels[:, 9:].astype(float)
             self.names = labels[:, 6]
 
-        # TODO: Identify good scalling method
         # Scale parameters
-        self.params[:, param_limits['log']] = np.log10(self.params[:, param_limits['log']])
+        self.params[:, log_params] = np.log10(self.params[:, log_params])
         self.params = (self.params - np.mean(self.params, axis=0)) / np.std(self.params, axis=0)
-        # self.params = (self.params - param_limits['low']) / \
-        #               (np.array(param_limits['high']) - param_limits['low'])
-        # self.params = 2 * (self.params - param_limits['low']) / \
-        #               (np.array(param_limits['high']) - param_limits['low']) - 1
         self.params = torch.from_numpy(self.params).float()
 
     def __len__(self):
@@ -145,6 +151,55 @@ class PyXspecFitting:
 
         # Calculate fit statistic loss
         return xspec.Fit.statistic
+
+
+class PixelShuffle1D(torch.nn.Module):
+    """
+    Used for upscaling by scale factor r for an input (*, C x r, L) to an output (*, C, L x r).
+
+    Equivalent to torch.nn.PixelShuffle but for 1D.
+
+    Attributes
+    ----------
+    upscale_factor : integer
+        Upscaling factor
+
+    Methods
+    -------
+    forward(x)
+        Forward pass of PixelShuffle1D
+    """
+    def __init__(self, upscale_factor: int):
+        """
+        Parameters
+        ----------
+        upscale_factor : integer
+            Upscaling factor
+        """
+        super().__init__()
+        self.upscale_factor = upscale_factor
+
+    def forward(self, x: Tensor):
+        """
+        Forward pass of pixel shuffle
+
+        Parameters
+        ----------
+        x : Tensor, shape (*, C x r, L)
+            Input tensor
+
+        Returns
+        -------
+        Tensor, (*, C, L x r)
+            Output tensor
+        """
+        output_channels = x.size(1) // self.upscale_factor
+        output_size = self.upscale_factor * x.size(2)
+
+        x = x.view([x.size(0), self.upscale_factor, output_channels, x.size(2)])
+        x = x.permute(0, 2, 3, 1)
+        x = x.reshape(x.size(0), output_channels, output_size)
+        return x
 
 
 class Encoder(nn.Module):
@@ -259,14 +314,14 @@ class Decoder(nn.Module):
         self.upscale = nn.Sequential(
             nn.Linear(in_features=model.param_limits.shape[0], out_features=64),
             nn.LeakyReLU(),
-            nn.Linear(in_features=64, out_features=128),
-            nn.LeakyReLU(),
-            nn.Linear(in_features=128, out_features=self.spectra_size * 4),
-            nn.BatchNorm1d(self.spectra_size * 4),
+            nn.Linear(in_features=64, out_features=self.spectra_size),
+            # nn.LeakyReLU(),
+            # nn.Linear(in_features=128, out_features=self.spectra_size * 4),
+            nn.BatchNorm1d(self.spectra_size),
             nn.LeakyReLU(),
         )
         self.conv1 = nn.Sequential(
-            nn.Conv1d(in_channels=4, out_channels=4, kernel_size=3, padding='same'),
+            nn.Conv1d(in_channels=2, out_channels=16, kernel_size=3, padding='same'),
             nn.Dropout1d(0.5),
             # nn.BatchNorm1d(16),
             nn.LeakyReLU(),
@@ -282,8 +337,8 @@ class Decoder(nn.Module):
         )
 
         self.conv_upscale = nn.Sequential(
-            nn.Conv1d(in_channels=4, out_channels=4, kernel_size=3, padding='same'),
-            nn.PixelShuffle(2)
+            nn.Conv1d(in_channels=16, out_channels=2, kernel_size=3, padding='same'),
+            PixelShuffle1D(2)
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -301,11 +356,12 @@ class Decoder(nn.Module):
             Generated spectrum
         """
         x = self.upscale(x)
-        x = x.view(x.size(0), -1, self.spectra_size)
+        x = x.view(x.size(0), 2, -1)
         x1 = self.conv1(x)
         # x2 = self.conv2(x + x1)
-        x3 = self.conv3(x1 + x)
-        return torch.squeeze(x3, dim=1)
+        # x3 = self.conv3(x1 + x)
+        out = self.conv_upscale(x1)
+        return torch.squeeze(out, dim=1)
 
 
 def progress_bar(i: int, total: int):
@@ -387,11 +443,31 @@ def fit_statistic(
     queue.put(loss / len(names))
 
 
+def weighted_mse(y: Tensor, y_hat: Tensor) -> Tensor:
+    """
+    Weighted MSE loss
+
+    Parameters
+    ----------
+    y : Tensor
+        Target data
+    y_hat : Tensor
+        Predicted data
+
+    Returns
+    -------
+    Tensor
+        Weighted MSE loss
+    """
+    weights = torch.abs(1 / y)
+    return torch.mean(weights * (y_hat - y) ** 2) / torch.sum(weights)
+
+
 def network_initialisation(
         val_frac: float,
         synth_path: str,
         labels_path: str,
-        param_limits: dict,
+        log_params: list,
         kwargs: dict,
         architecture: Type[Encoder | Decoder],
         model: PyXspecFitting,
@@ -408,8 +484,8 @@ def network_initialisation(
         Path to synthetic data
     labels_path : string
         Path to labels
-    param_limits : dictionary
-        Limits for each parameter and if it is in logarithmic space
+    log_params : list
+        Index of each free parameter in logarithmic space
     kwargs : dictionary
         Keyword arguments for dataloader
     architecture : Encoder | Decoder
@@ -424,10 +500,10 @@ def network_initialisation(
     tuple[Encoder | Decoder, Optimizer, DataLoader, DataLoader]
         Neural network, optimizer and dataloaders for the training and validation datasets
     """
-    learning_rate = 5e-4
+    learning_rate = 5e-3
 
     # Fetch dataset & create train & val data
-    dataset = SpectrumDataset(synth_path, labels_path, param_limits)
+    dataset = SpectrumDataset(synth_path, labels_path, log_params)
     val_amount = int(len(dataset) * val_frac)
 
     train_dataset, val_dataset = random_split(dataset, [len(dataset) - val_amount, val_amount])
@@ -465,13 +541,16 @@ def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, ax
     """
     x_data = np.load('./data/spectra_x_axis.npy')
 
+    if x_data.size % 2 != 0:
+        x_data = np.append(x_data[:-2], np.mean(x_data[ -2:]))
+
     axes.set_title(f'Epoch: {epoch}', fontsize=16)
     axes.scatter(x_data, y_data, label='Spectrum')
     axes.scatter(x_data, y_recon, label='Reconstruction')
     axes.set_xlabel('Energy (keV)', fontsize=12)
     axes.set_ylabel(r'Counts ($s^{-1}$ $detector^{-1}$ $keV^{-1}$)', fontsize=12)
     axes.set_xscale('log')
-    axes.set_yscale('log')
+    # axes.set_yscale('log')
     axes.legend(fontsize=16)
 
 
@@ -513,6 +592,8 @@ def train(
         else:
             output = cnn(params)
             loss = nn.MSELoss()(output, spectra)
+            # TODO: Loss with poisson uncertainty
+            # loss = weighted_mse(spectra, output)
 
         # Optimise CNN
         optimizer.zero_grad()
@@ -560,6 +641,7 @@ def validate(
             else:
                 output = cnn(params)
                 loss += nn.MSELoss()(output, spectra).item()
+                # loss += weighted_mse(spectra, output).item()
 
     return loss / len(loader), spectra.cpu().numpy(), output.cpu().numpy()
 
@@ -654,7 +736,7 @@ def main():
     Main function for spectrum machine learning
     """
     # Variables
-    num_epochs = 80
+    num_epochs = 50
     val_frac = 0.1
     data_dir = '../../Documents/Nicer_Data/ethan'
     spectra_path = './data/preprocessed_spectra.npy'
@@ -662,19 +744,12 @@ def main():
     params_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
     synth_params_path = './data/synth_spectra_params.npy'
     fix_params = np.array([[4, 0], [5, 100]])
-    param_limits = {
-        'low': np.array([5e-3, 1.3, 1e-3, 2.5e-2, 1e-2]),
-        'high': np.array([75, 4, 1, 4, 1e10]),
-        'log': [0, 2, 3, 4],
-    }
+    log_params = [0, 2, 3, 4]
 
     # Constants
     train_loss = []
     val_loss = []
     root_dir = os.path.dirname(os.path.abspath(__file__))
-
-    param_limits['low'][param_limits['log']] = np.log10(param_limits['low'][param_limits['log']])
-    param_limits['high'][param_limits['log']] = np.log10(param_limits['high'][param_limits['log']])
 
     # Xspec initialization
     model = PyXspecFitting('tbabs(simplcutx(ezdiskbb))', fix_params)
@@ -687,7 +762,7 @@ def main():
         val_frac,
         synth_path,
         synth_params_path,
-        param_limits,
+        log_params,
         kwargs,
         Decoder,
         model,
@@ -698,18 +773,19 @@ def main():
         val_frac,
         spectra_path,
         params_path,
-        param_limits,
+        log_params,
         kwargs,
         Encoder,
         model,
         device
     )
 
-    _, axes = plt.subplots(4, 2, figsize=(24, 12), constrained_layout=True)
+    _, axes = plt.subplots(4, 3, figsize=(24, 12), constrained_layout=True)
     axes = axes.flatten()
     plot_epochs = np.rint((np.arange(axes.size) + 1) * num_epochs / axes.size)
 
     # Train for each epoch
+    learning_rate = 1e-3
     for epoch in range(num_epochs):
         t_initial = time()
 

@@ -47,7 +47,7 @@ Configurable parameters for `preprocess` are:
 Options for the function `spectrum_data` are:
 * spectrum_path (str) - Path to the spectrum fits file
 * background_dir (str = '') - Path to the directory containing the background fits file
-* cut_off (list) - Lower & upper limit of accepted energies in keV
+* cut_off (list = [0.3, 10]) - Lower & upper limit of accepted energies in keV
 
 ### data_preprocessing_comparison
 Compares the performance of data_preprocessing to Xspec's preprocessing.  
