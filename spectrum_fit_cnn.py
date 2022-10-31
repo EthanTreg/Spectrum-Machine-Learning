@@ -13,7 +13,6 @@ from torch import optim, Tensor
 from torch.utils.data import Dataset, DataLoader, random_split
 
 # TODO: Simple data
-# TODO: Uncertainties
 # TODO: Longer training
 
 
@@ -43,6 +42,7 @@ class SpectrumDataset(Dataset):
         """
         # self.spectra = torch.from_numpy(np.load(data_file)).float()
         self.spectra = torch.from_numpy(np.log10(np.maximum(1e-8, np.load(data_file)))).float()
+        self.spectra = (self.spectra - torch.mean(self.spectra)) / torch.std(self.spectra)
 
         if self.spectra.size(1) % 2 != 0:
             self.spectra = torch.cat((
@@ -286,7 +286,7 @@ class Decoder(nn.Module):
     ----------
     spectra_size : int
         number of data points in spectra
-    upscale : nn.Sequential
+    linear_upscale : nn.Sequential
         Fully connected layers to produce spectra from parameters
     conv1 : nn.Sequential
         First convolutional layer
@@ -309,36 +309,72 @@ class Decoder(nn.Module):
         """
         super().__init__()
         self.spectra_size = spectra_size
+        drop_probability = 0.1
 
         # Construct layers in CNN
-        self.upscale = nn.Sequential(
+        self.linear_upscale = nn.Sequential(
             nn.Linear(in_features=model.param_limits.shape[0], out_features=64),
-            nn.LeakyReLU(),
-            nn.Linear(in_features=64, out_features=self.spectra_size),
-            # nn.LeakyReLU(),
-            # nn.Linear(in_features=128, out_features=self.spectra_size * 4),
+            nn.SELU(),
+            nn.Linear(in_features=64, out_features=128),
+            nn.SELU(),
+            nn.Linear(in_features=128, out_features=self.spectra_size),
             nn.BatchNorm1d(self.spectra_size),
-            nn.LeakyReLU(),
+            nn.SELU(),
         )
-        self.conv1 = nn.Sequential(
-            nn.Conv1d(in_channels=2, out_channels=16, kernel_size=3, padding='same'),
-            nn.Dropout1d(0.5),
-            # nn.BatchNorm1d(16),
-            nn.LeakyReLU(),
+        self.residual11 = nn.Sequential(
+            nn.Conv1d(in_channels=4, out_channels=8, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(8),
+            nn.ELU(),
+            nn.Conv1d(in_channels=8, out_channels=16, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(16),
         )
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(in_channels=16, out_channels=4, kernel_size=5, padding='same'),
-            nn.Dropout1d(0.5),
-            # nn.BatchNorm1d(4),
-            nn.LeakyReLU(),
+        self.residual12 = nn.Sequential(
+            nn.Conv1d(in_channels=20, out_channels=32, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(32),
+            nn.ELU(),
+            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(64),
         )
-        self.conv3 = nn.Sequential(
-            nn.Conv1d(in_channels=4, out_channels=1, kernel_size=7, padding='same'),
+        self.residual13 = nn.Sequential(
+            nn.Conv1d(in_channels=84, out_channels=128, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(128),
+            nn.ELU(),
+            nn.Conv1d(in_channels=128, out_channels=128, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(128),
         )
-
-        self.conv_upscale = nn.Sequential(
-            nn.Conv1d(in_channels=16, out_channels=2, kernel_size=3, padding='same'),
-            PixelShuffle1D(2)
+        self.conv_upscale1 = nn.Sequential(
+            nn.ELU(),
+            nn.Conv1d(in_channels=212, out_channels=32, kernel_size=3, padding='same'),
+            PixelShuffle1D(2),
+        )
+        self.residual21 = nn.Sequential(
+            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(32),
+            nn.ELU(),
+            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(64),
+        )
+        self.residual22 = nn.Sequential(
+            nn.Conv1d(in_channels=80, out_channels=64, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(64),
+            nn.ELU(),
+            nn.Conv1d(in_channels=64, out_channels=64, kernel_size=3, padding='same'),
+            nn.Dropout1d(drop_probability),
+            nn.BatchNorm1d(64),
+        )
+        self.conv_upscale2 = nn.Sequential(
+            nn.ELU(),
+            nn.Conv1d(in_channels=144, out_channels=2, kernel_size=3, padding='same'),
+            PixelShuffle1D(2),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -355,13 +391,17 @@ class Decoder(nn.Module):
         tensor
             Generated spectrum
         """
-        x = self.upscale(x)
-        x = x.view(x.size(0), 2, -1)
-        x1 = self.conv1(x)
-        # x2 = self.conv2(x + x1)
-        # x3 = self.conv3(x1 + x)
-        out = self.conv_upscale(x1)
-        return torch.squeeze(out, dim=1)
+        # noise = torch.
+        x = self.linear_upscale(x)
+        x = x.view(x.size(0), 4, -1)
+        x = torch.cat((x, self.residual11(x)), dim=1)
+        x = torch.cat((x, self.residual12(x)), dim=1)
+        x = torch.cat((x, self.residual13(x)), dim=1)
+        x = self.conv_upscale1(x)
+        x = torch.cat((x, self.residual21(x)), dim=1)
+        x = torch.cat((x, self.residual22(x)), dim=1)
+        x = self.conv_upscale2(x)
+        return torch.squeeze(x, dim=1)
 
 
 def progress_bar(i: int, total: int):
@@ -387,9 +427,6 @@ def progress_bar(i: int, total: int):
         print()
 
 
-# TODO: Is calculating loss manually faster
-# TODO: Does this work with PyTorch?
-# TODO: Load multiple spectra at once
 def fit_statistic(
         total: int,
         names: list[str],
@@ -472,7 +509,13 @@ def network_initialisation(
         architecture: Type[Encoder | Decoder],
         model: PyXspecFitting,
         device: torch.device
-) -> tuple[Encoder | Decoder, torch.optim.Optimizer, DataLoader, DataLoader]:
+) -> tuple[
+    Encoder | Decoder,
+    optim.Optimizer,
+    optim.lr_scheduler.ReduceLROnPlateau,
+    DataLoader,
+    DataLoader
+]:
     """
     Initialises data and neural network for either encoder or decoder CNN
 
@@ -497,10 +540,11 @@ def network_initialisation(
 
     Returns
     -------
-    tuple[Encoder | Decoder, Optimizer, DataLoader, DataLoader]
-        Neural network, optimizer and dataloaders for the training and validation datasets
+    tuple[Encoder | Decoder, Optimizer, lr_scheduler, DataLoader, DataLoader]
+        Neural network, optimizer, scheduler and
+        dataloaders for the training and validation datasets
     """
-    learning_rate = 5e-3
+    learning_rate = 1e-5
 
     # Fetch dataset & create train & val data
     dataset = SpectrumDataset(synth_path, labels_path, log_params)
@@ -515,13 +559,14 @@ def network_initialisation(
     # Initialise the CNN
     cnn = architecture(dataset[0][0].size(dim=0), model)
     cnn.to(device)
-    optimizer = optim.Adam(cnn.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(cnn.parameters(), lr=learning_rate, weight_decay=1e-5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, verbose=True)
 
     print(f'{cnn.__class__.__name__}:\n'
           f'Training data size: {len(train_dataset)}\t'
           f'Validation data size: {len(val_dataset)}\n')
 
-    return cnn, optimizer, train_loader, val_loader
+    return cnn, optimizer, scheduler, train_loader, val_loader
 
 
 def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, axes: Axes):
@@ -548,9 +593,8 @@ def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, ax
     axes.scatter(x_data, y_data, label='Spectrum')
     axes.scatter(x_data, y_recon, label='Reconstruction')
     axes.set_xlabel('Energy (keV)', fontsize=12)
-    axes.set_ylabel(r'Counts ($s^{-1}$ $detector^{-1}$ $keV^{-1}$)', fontsize=12)
+    axes.set_ylabel(r'$log_{10}$ Counts ($s^{-1}$ $detector^{-1}$ $keV^{-1}$)', fontsize=12)
     axes.set_xscale('log')
-    # axes.set_yscale('log')
     axes.legend(fontsize=16)
 
 
@@ -592,7 +636,6 @@ def train(
         else:
             output = cnn(params)
             loss = nn.MSELoss()(output, spectra)
-            # TODO: Loss with poisson uncertainty
             # loss = weighted_mse(spectra, output)
 
         # Optimise CNN
@@ -736,7 +779,7 @@ def main():
     Main function for spectrum machine learning
     """
     # Variables
-    num_epochs = 50
+    num_epochs = 100
     val_frac = 0.1
     data_dir = '../../Documents/Nicer_Data/ethan'
     spectra_path = './data/preprocessed_spectra.npy'
@@ -758,7 +801,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
 
-    decoder, d_optimizer, d_train_loader, d_val_loader = network_initialisation(
+    decoder, d_optimizer, d_scheduler, d_train_loader, d_val_loader = network_initialisation(
         val_frac,
         synth_path,
         synth_params_path,
@@ -769,28 +812,27 @@ def main():
         device
     )
 
-    encoder, e_optimizer, e_train_loader, e_val_loader = network_initialisation(
-        val_frac,
-        spectra_path,
-        params_path,
-        log_params,
-        kwargs,
-        Encoder,
-        model,
-        device
-    )
+    # encoder, e_optimizer, e_scheduler, e_train_loader, e_val_loader = network_initialisation(
+    #     val_frac,
+    #     spectra_path,
+    #     params_path,
+    #     log_params,
+    #     kwargs,
+    #     Encoder,
+    #     model,
+    #     device
+    # )
 
     _, axes = plt.subplots(4, 3, figsize=(24, 12), constrained_layout=True)
     axes = axes.flatten()
     plot_epochs = np.rint((np.arange(axes.size) + 1) * num_epochs / axes.size)
 
     # Train for each epoch
-    learning_rate = 1e-3
     for epoch in range(num_epochs):
         t_initial = time()
 
-        loss, spectra, _ = validate(device, d_val_loader, decoder)
-        val_loss.append(loss)
+        val_loss.append(validate(device, d_val_loader, decoder)[0])
+        d_scheduler.step(val_loss[-1])
 
         # Validate CNN
         # if epoch in plot_epochs:
