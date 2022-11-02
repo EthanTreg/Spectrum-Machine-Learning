@@ -2,10 +2,16 @@
 
 ## Requirements
 * Install dependencies:  
-`pip install -r requirements.txt`
+`pip install -r requirements.txt`  
 * PyTorch dependencies[^1]:  
-NVIDIA GPU with CUDA Toolkit > v11.6
+NVIDIA GPU with CUDA Toolkit ~= v11.6
 [^1]: Only required for use with NVIDIA GPU
+
+### Decoder Requirements
+* Generate synthetic data by running `synthesize_spectra.py`
+
+### Encoder Requirements
+* Preprocess fits files by running `data_preprocessing.py`
 
 ## File Descriptions
 ### spectrum_fit_cnn:

@@ -1,4 +1,5 @@
 import os
+import json
 from time import time
 from typing import Type
 from multiprocessing import Process, Queue, Value
@@ -153,7 +154,13 @@ class PyXspecFitting:
         return xspec.Fit.statistic
 
 
-class PixelShuffle1D(torch.nn.Module):
+class EmptyLayer(nn.Module):
+    """
+    Empty layer to be used within the network module list for shortcut and reshaping layers
+    """
+
+
+class PixelShuffle1d(torch.nn.Module):
     """
     Used for upscaling by scale factor r for an input (*, C x r, L) to an output (*, C, L x r).
 
@@ -284,97 +291,33 @@ class Decoder(nn.Module):
 
     Attributes
     ----------
-    spectra_size : int
-        number of data points in spectra
-    linear_upscale : nn.Sequential
-        Fully connected layers to produce spectra from parameters
-    conv1 : nn.Sequential
-        First convolutional layer
-    conv2 : nn.Sequential
-        Second convolutional layer
+    layers : list[dictionary]
+        Layers with layer parameters
+    network : ModuleList
+        Network construction
 
     Methods
     -------
     forward(x)
-        Forward pass of encoder
+        Forward pass of decoder
     """
-    def __init__(self, spectra_size: int, model: PyXspecFitting):
+    def __init__(self, spectra_size: int, config_file: str, model: PyXspecFitting):
         """
         Parameters
         ----------
         spectra_size : int
             number of data points in spectra
+        config_file : string
+            Path to the config file
         model : XspecModel
             PyXspec model
         """
         super().__init__()
-        self.spectra_size = spectra_size
-        drop_probability = 0.1
-
         # Construct layers in CNN
-        self.linear_upscale = nn.Sequential(
-            nn.Linear(in_features=model.param_limits.shape[0], out_features=64),
-            nn.SELU(),
-            nn.Linear(in_features=64, out_features=128),
-            nn.SELU(),
-            nn.Linear(in_features=128, out_features=self.spectra_size),
-            nn.BatchNorm1d(self.spectra_size),
-            nn.SELU(),
-        )
-        self.residual11 = nn.Sequential(
-            nn.Conv1d(in_channels=4, out_channels=8, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(8),
-            nn.ELU(),
-            nn.Conv1d(in_channels=8, out_channels=16, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(16),
-        )
-        self.residual12 = nn.Sequential(
-            nn.Conv1d(in_channels=20, out_channels=32, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(32),
-            nn.ELU(),
-            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(64),
-        )
-        self.residual13 = nn.Sequential(
-            nn.Conv1d(in_channels=84, out_channels=128, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(128),
-            nn.ELU(),
-            nn.Conv1d(in_channels=128, out_channels=128, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(128),
-        )
-        self.conv_upscale1 = nn.Sequential(
-            nn.ELU(),
-            nn.Conv1d(in_channels=212, out_channels=32, kernel_size=3, padding='same'),
-            PixelShuffle1D(2),
-        )
-        self.residual21 = nn.Sequential(
-            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(32),
-            nn.ELU(),
-            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(64),
-        )
-        self.residual22 = nn.Sequential(
-            nn.Conv1d(in_channels=80, out_channels=64, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(64),
-            nn.ELU(),
-            nn.Conv1d(in_channels=64, out_channels=64, kernel_size=3, padding='same'),
-            nn.Dropout1d(drop_probability),
-            nn.BatchNorm1d(64),
-        )
-        self.conv_upscale2 = nn.Sequential(
-            nn.ELU(),
-            nn.Conv1d(in_channels=144, out_channels=2, kernel_size=3, padding='same'),
-            PixelShuffle1D(2),
+        self.layers, self.network = create_network(
+            model.param_limits.shape[0],
+            spectra_size,
+            config_file,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -391,16 +334,18 @@ class Decoder(nn.Module):
         tensor
             Generated spectrum
         """
-        # noise = torch.
-        x = self.linear_upscale(x)
-        x = x.view(x.size(0), 4, -1)
-        x = torch.cat((x, self.residual11(x)), dim=1)
-        x = torch.cat((x, self.residual12(x)), dim=1)
-        x = torch.cat((x, self.residual13(x)), dim=1)
-        x = self.conv_upscale1(x)
-        x = torch.cat((x, self.residual21(x)), dim=1)
-        x = torch.cat((x, self.residual22(x)), dim=1)
-        x = self.conv_upscale2(x)
+        outputs = []
+
+        for i, layer in enumerate(self.layers):
+            if layer['type'] == 'reshape':
+                x = x.view(x.size(0), *layer['output'])
+            elif layer['type'] == 'shortcut':
+                x = torch.cat((x, outputs[layer['layer']]), dim=1)
+            else:
+                x = self.network[i](x)
+
+            outputs.append(x)
+
         return torch.squeeze(x, dim=1)
 
 
@@ -425,6 +370,95 @@ def progress_bar(i: int, total: int):
 
     if i == total:
         print()
+
+
+def create_network(
+        input_dim: int,
+        spectra_size: int,
+        config_path: str) -> tuple[list[dict], nn.ModuleList]:
+    """
+    Creates a network from a config file
+
+    Parameters
+    ----------
+    input_dim : integer
+        Size of the input
+    spectra_size : integer
+        Size of the spectra
+    config_path : string
+        Path to the config file
+
+    Returns
+    -------
+    tuple[list[dictionary], ModuleList]
+        Layers in the network with parameters and network construction
+    """
+    with open(config_path, 'r', encoding='utf-8') as file:
+        file = json.load(file)
+
+    dropout_prob = file['net']['dropout_prob']
+    dims = [input_dim]
+    module_list = nn.ModuleList()
+
+    for i, layer in enumerate(file['layers']):
+        module = nn.Sequential()
+
+        if layer['type'] == 'linear':
+            if isinstance(layer['output'], int):
+                dims.append(layer['output'])
+            else:
+                dims.append(spectra_size)
+
+            linear = nn.Linear(in_features=dims[-2], out_features=dims[-1])
+            module.add_module(f'linear_{i}', linear)
+            module.add_module(f'batch_norm_{i}', nn.BatchNorm1d(dims[-1]))
+            module.add_module(f'SELU_{i}', nn.SELU())
+
+        elif layer['type'] == 'reshape':
+            dims.append(layer['output'][0])
+            module.add_module(f'reshape_{i}', EmptyLayer())
+
+        elif layer['type'] == 'convolutional':
+            dims.append(layer['filters'])
+
+            conv = nn.Conv1d(
+                in_channels=dims[-2],
+                out_channels=dims[-1],
+                kernel_size=3,
+                padding='same'
+            )
+            module.add_module(f'conv_{i}', conv)
+            module.add_module(f'dropout_{i}', nn.Dropout1d(dropout_prob))
+            module.add_module(f'batch_norm_{i}', nn.BatchNorm1d(dims[-1]))
+            module.add_module(f'ELU_{i}', nn.ELU())
+
+        elif layer['type'] == 'shortcut':
+            dims.append(dims[-1] + dims[layer['layer']])
+            module.add_module(f'shortcut_{i}', EmptyLayer())
+
+        else:
+            dims.append(layer['filters'])
+
+            conv = nn.Conv1d(
+                in_channels=dims[-2],
+                out_channels=dims[-1],
+                kernel_size=3,
+                padding='same'
+            )
+            module.add_module(f'conv_{i}', conv)
+
+            if layer['batch_norm']:
+                module.add_module(f'batch_norm_{i}', nn.BatchNorm1d(dims[-1]))
+
+            if layer['activation']:
+                module.add_module(f'ELU_{i}', nn.ELU())
+
+            module.add_module(f'pixel_shuffle_{i}', PixelShuffle1d(2))
+            dims[-1] = int(dims[-1] / 2)
+
+        module_list.append(module)
+
+    return file['layers'], module_list
 
 
 def fit_statistic(
@@ -504,6 +538,7 @@ def network_initialisation(
         val_frac: float,
         synth_path: str,
         labels_path: str,
+        config_file: str,
         log_params: list,
         kwargs: dict,
         architecture: Type[Encoder | Decoder],
@@ -527,6 +562,8 @@ def network_initialisation(
         Path to synthetic data
     labels_path : string
         Path to labels
+    config_file : string
+        Path to network config file
     log_params : list
         Index of each free parameter in logarithmic space
     kwargs : dictionary
@@ -557,7 +594,7 @@ def network_initialisation(
     val_loader = DataLoader(val_dataset, batch_size=128, shuffle=True, **kwargs)
 
     # Initialise the CNN
-    cnn = architecture(dataset[0][0].size(dim=0), model)
+    cnn = architecture(dataset[0][0].size(dim=0), config_file, model)
     cnn.to(device)
     optimizer = optim.Adam(cnn.parameters(), lr=learning_rate, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, verbose=True)
@@ -786,6 +823,7 @@ def main():
     synth_path = './data/synth_spectra.npy'
     params_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
     synth_params_path = './data/synth_spectra_params.npy'
+    config_file = './decoder.json'
     fix_params = np.array([[4, 0], [5, 100]])
     log_params = [0, 2, 3, 4]
 
@@ -805,6 +843,7 @@ def main():
         val_frac,
         synth_path,
         synth_params_path,
+        config_file,
         log_params,
         kwargs,
         Decoder,
