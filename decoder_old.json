@@ -1,0 +1,113 @@
+{
+    "net": {
+        "dropout_prob": 0.1
+    },
+    "layers": [
+        {
+            "type": "linear",
+            "output": 64
+        },
+        {
+            "type": "linear",
+            "output": 128
+        },
+        {
+            "type": "linear",
+            "output": "spectra"
+        },
+        {
+            "type": "reshape",
+            "output": [8, -1]
+        },
+        {
+            "type": "convolutional",
+            "filters": 16
+        },
+        {
+            "type": "convolutional",
+            "filters": 32
+        },
+        {
+            "type": "shortcut",
+            "layer": -3
+        },
+        {
+            "type": "convolutional",
+            "filters": 64
+        },
+        {
+            "type": "convolutional",
+            "filters": 64
+        },
+        {
+            "type": "shortcut",
+            "layer": -3
+        },
+        {
+            "type": "convolutional",
+            "filters": 64
+        },
+        {
+            "type": "convolutional",
+            "filters": 64
+        },
+        {
+            "type": "shortcut",
+            "layer": -3
+        },
+        {
+            "type": "upscale",
+            "filters": 32,
+            "batch_norm": 0,
+            "activation": 0
+        },
+        {
+            "type": "convolutional",
+            "filters": 32
+        },
+        {
+            "type": "convolutional",
+            "filters": 64
+        },
+        {
+            "type": "shortcut",
+            "layer": -3
+        },
+        {
+            "type": "convolutional",
+            "filters": 128
+        },
+        {
+            "type": "convolutional",
+            "filters": 128
+        },
+        {
+            "type": "shortcut",
+            "layer": -3
+        },
+        {
+            "type": "upscale",
+            "filters": 64,
+            "batch_norm": 0,
+            "activation": 0
+        },
+        {
+            "type": "convolutional",
+            "filters": 64
+        },
+        {
+            "type": "convolutional",
+            "filters": 128
+        },
+        {
+            "type": "shortcut",
+            "layer": -3
+        },
+        {
+            "type": "upscale",
+            "filters": 2,
+            "batch_norm": 0,
+            "activation": 0
+        }
+    ]
+}

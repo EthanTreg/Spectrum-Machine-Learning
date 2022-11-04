@@ -4,7 +4,7 @@ import numpy as np
 from xspec import Spectrum, Plot
 from matplotlib import pyplot as plt
 
-from data_preprocessing import spectrum_data
+from src.data_preprocessing import spectrum_data
 
 
 def diff_plot(

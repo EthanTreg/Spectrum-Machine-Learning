@@ -1,8 +1,9 @@
-/data/
-/.idea
 **/*.bg
 **/*.arf
 **/*.rmf
 **/*.jsgrp
 **/*test*
+/.idea
+/data/
 /plots/
+/model_states/

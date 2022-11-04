@@ -6,7 +6,7 @@ import xspec
 import numpy as np
 from astropy.io import fits
 
-from data_preprocessing import spectrum_data
+from src.data_preprocessing import spectrum_data
 
 
 def progress_bar(i: int, total: int):
@@ -108,8 +108,8 @@ def generate_synth(current_num: int,
         Synthetic params
     """
     load_frequency = 100
-    data_dir = '../../Documents/Nicer_Data/ethan/'
-    labels_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
+    data_dir = '../../../Documents/Nicer_Data/ethan/'
+    labels_path = '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
     fixed_params = {4: 0, 5: 100}
     params = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0} | fixed_params
     synth_params = np.empty((0, len(params) - len(fixed_params)))
@@ -280,7 +280,7 @@ def main():
     clear_synth = False
     batches = 1000
     total_synth_num = 1e5
-    synth_dir = './data/synth_spectra/'
+    synth_dir = '../data/synth_spectra/'
     synth_data = './data/synth_spectra.npy'
     param_limits = [
         {'id': 1, 'low': 5e-3, 'high': 75, 'log': True},

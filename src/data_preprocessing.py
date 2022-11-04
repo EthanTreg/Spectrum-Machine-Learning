@@ -3,28 +3,7 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 
-
-def progress_bar(i: int, total: int):
-    """
-    Terminal progress bar
-
-    Parameters
-    ----------
-    i : int
-        Current progress
-    total : int
-        Completion number
-    """
-    length = 50
-    i += 1
-
-    filled = int(i * length / total)
-    percent = i * 100 / total
-    bar_fill = '█' * filled + '-' * (length - filled)
-    print(f'\rProgress: |{bar_fill}| {int(percent)}%\t', end='')
-
-    if i == total:
-        print()
+from src.utils.utils import progress_bar
 
 
 def channel_kev(channel: np.ndarray) -> np.ndarray:
@@ -180,8 +159,8 @@ def preprocess():
     Preprocess spectra and save to file
     """
     # Initialize variables
-    data_dir = '../../Documents/Nicer_Data/ethan/'
-    labels_path = './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
+    data_dir = '../../../Documents/Nicer_Data/ethan/'
+    labels_path = '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
     spectra = []
 
     # Fetch spectra names & labels
