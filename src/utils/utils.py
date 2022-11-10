@@ -143,6 +143,11 @@ class SpectrumDataset(Dataset):
         Parameters for each spectra if supervised
     names : ndarray
         Names of each spectrum
+
+    Methods
+    -------
+    downscaler(downscales)
+        Downscales input spectra
     """
     def __init__(self, data_file: str, labels_file: str, log_params: list):
         """
@@ -158,7 +163,6 @@ class SpectrumDataset(Dataset):
         self.spectra = torch.from_numpy(np.log10(np.maximum(1e-8, np.load(data_file)))).float()
         self.spectra = (self.spectra - torch.min(self.spectra)) / \
                        (torch.max(self.spectra) - torch.min(self.spectra))
-        # self.spectra = (self.spectra - torch.mean(self.spectra)) / torch.std(self.spectra)
 
         if self.spectra.size(1) % 2 != 0:
             self.spectra = torch.cat((
@@ -176,7 +180,9 @@ class SpectrumDataset(Dataset):
 
         # Scale parameters
         self.params[:, log_params] = np.log10(self.params[:, log_params])
-        self.params = (self.params - np.mean(self.params, axis=0)) / np.std(self.params, axis=0)
+        self.params = (self.params - np.min(self.params, axis=0)) / \
+                      (np.max(self.params, axis=0) - np.min(self.params, axis=0))
+        # self.params = (self.params - np.mean(self.params, axis=0)) / np.std(self.params, axis=0)
         self.params = torch.from_numpy(self.params).float()
 
     def __len__(self):
@@ -198,6 +204,24 @@ class SpectrumDataset(Dataset):
             Spectrum data, target parameters and spectrum name
         """
         return self.spectra[idx], self.params[idx], self.names[idx]
+
+    def downscaler(self, downscales: int):
+        """
+        Downscales input spectra
+
+        Parameters
+        ----------
+        downscales : integer
+            Number of times to downscale
+        """
+        avgpool = nn.AvgPool1d(kernel_size=2)
+
+        self.spectra = self.spectra.unsqueeze(dim=1)
+
+        for _ in range(downscales):
+            self.spectra = avgpool(self.spectra)
+
+        self.spectra = self.spectra.squeeze(dim=1)
 
 
 class PyXspecFitting:
@@ -233,6 +257,7 @@ class PyXspecFitting:
         self.fix_params = fix_params
         self.param_limits = np.empty((0, 2))
 
+        # PyXspec initialization
         xspec.Xset.chatter = 0
         xspec.Xset.logChatter = 0
         xspec.AllModels.lmod('simplcutx', dirPath='../../../Documents/Xspec_Models/simplcutx')
@@ -304,12 +329,15 @@ class PyXspecFitting:
 
             params = np.clip(params, a_min=param_min, a_max=param_max)
 
+            # Load spectrum
             xspec.Spectrum(name)
 
+            # Calculate fit statistic
             loss += self.fit_statistic(params[i])
 
             xspec.AllData.clear()
 
+            # Increase progress
             with counter.get_lock():
                 counter.value += 1
 
@@ -421,17 +449,8 @@ def create_network(
 
         # Linear upscaling
         elif layer['type'] == 'linear_upscale':
-            # Make sure number of channels is one
-            conv = nn.Conv1d(
-                in_channels=dims[-1],
-                out_channels=1,
-                kernel_size=1,
-                padding='same',
-            )
             linear = nn.Linear(in_features=data_size, out_features=data_size * 2)
 
-            module.add_module(f'conv_{i}', conv)
-            module.add_module(f'ELU_{i}', nn.ELU())
             module.add_module(f'reshape_{i}', Reshape([-1]))
             module.add_module(f'linear_{i}', linear)
             module.add_module(f'SELU_{i}', nn.SELU())
@@ -441,7 +460,7 @@ def create_network(
             data_size *= 2
             dims.append(1)
 
-        # Convolutional upscaling
+        # Pixel shuffle convolutional upscaling
         elif layer['type'] == 'conv_upscale':
             dims.append(layer['filters'])
 
@@ -449,13 +468,15 @@ def create_network(
                 in_channels=dims[-2],
                 out_channels=dims[-1],
                 kernel_size=3,
-                padding='same'
+                padding='same',
             )
             module.add_module(f'conv_{i}', conv)
 
+            # Optional batch norm layers
             if layer['batch_norm']:
                 module.add_module(f'batch_norm_{i}', nn.BatchNorm1d(dims[-1]))
 
+            # Optional activation layers
             if layer['activation']:
                 module.add_module(f'ELU_{i}', nn.ELU())
 
@@ -466,11 +487,43 @@ def create_network(
             # Data size doubles
             data_size *= 2
 
+        # Transpose convolutional upscaling
+        elif layer['type'] == 'conv_transpose':
+            dims.append(layer['filters'])
+
+            conv = nn.ConvTranspose1d(
+                in_channels=dims[-2],
+                out_channels=dims[-1],
+                kernel_size=2,
+                stride=2,
+            )
+
+            module.add_module(f'conv_transpose_{i}', conv)
+            module.add_module(f'dropout_{i}', nn.Dropout1d(dropout_prob))
+            module.add_module(f'ELU_{i}', nn.ELU())
+
+            # Data size doubles
+            data_size *= 2
+
         # Upscaling by upsampling
         elif layer['type'] == 'upsample':
             module.add_module(f'upsample_{i}', nn.Upsample(scale_factor=2, mode='linear'))
             # Data size doubles
             data_size *= 2
+
+        # Depth downscale for compatibility using convolution with kernel size of 1
+        elif layer['type'] == 'conv_downscale':
+            dims.append(1)
+
+            conv = nn.Conv1d(
+                in_channels=dims[-2],
+                out_channels=dims[-1],
+                kernel_size=1,
+                padding='same'
+            )
+
+            module.add_module(f'conv_downscale_{i}', conv)
+            module.add_module(f'ELU_{i}', nn.ELU())
 
         # Reshape data layer
         elif layer['type'] == 'reshape':
@@ -480,9 +533,13 @@ def create_network(
             # Data size equals the previous size divided by the first shape dimension
             data_size = int(dims[-2] / dims[-1])
 
-        # Shortcut layer or skip connection
-        elif layer['type'] == 'shortcut':
+        # Shortcut layer or skip connection using concatenation
+        elif layer['type'] == 'concatenate':
             dims.append(dims[-1] + dims[layer['layer']])
+
+        # Shortcut layer or skip connection using addition
+        elif layer['type'] == 'shortcut':
+            dims.append(dims[-1])
 
         # Unknown layer
         else:
@@ -493,55 +550,98 @@ def create_network(
     return file['layers'], module_list
 
 
-def network_initialisation(
-        learning_rate: float,
-        val_frac: float,
-        synth_path: str,
-        labels_path: str,
-        log_params: list,
-        model_args: tuple,
-        kwargs: dict,
-        architecture: Type[Encoder | Decoder],
-        device: torch.device
+def load_network(
+        load_num: int,
+        states_dir: str,
+        cnn: Encoder | Decoder,
+        optimizer: optim.Optimizer,
+        scheduler: optim.lr_scheduler.ReduceLROnPlateau
 ) -> tuple[
+    int,
     Encoder | Decoder,
     optim.Optimizer,
     optim.lr_scheduler.ReduceLROnPlateau,
-    DataLoader,
-    DataLoader
+    list,
+    list
 ]:
     """
-    Initialises data and neural network for either encoder or decoder CNN
+    Loads the network from a previously saved state
+
+    Can account for changes in the network
 
     Parameters
     ----------
-    learning_rate : float
-        Learning rate of the optimizer
+    load_num : integer
+        File number of the saved state
+    states_dir : string
+        Directory to the save files
+    cnn : Decoder | Encoder
+        The network to append saved state to
+    optimizer : Optimizer
+        The optimizer to append saved state to
+    scheduler : ReduceLROnPlateau
+        The scheduler to append saved state to
+
+    Returns
+    -------
+    tuple[int, Encoder | Decoder, Optimizer, ReduceLROnPlateau, list, list]
+        The initial epoch, the updated network, optimizer
+        and scheduler, and the training and validation losses
+    """
+    d_state = torch.load(f'{states_dir}{type(cnn).__name__}_{load_num}.pth')
+
+    # Updates some saved states with the new network for compatibility
+    d_state['optimizer']['param_groups'][0]['params'] = \
+        optimizer.state_dict()['param_groups'][0]['params']
+    d_state['scheduler']['best'] = scheduler.state_dict()['best']
+    old_keys = d_state['state_dict'].copy().keys()
+
+    # Remove layers not present in the new network
+    for i, key in enumerate(old_keys):
+        if key not in cnn.state_dict().keys():
+            del d_state['state_dict'][key]
+            del d_state['optimizer']['state'][i]
+
+    # Apply the saved states to the new network
+    initial_epoch = d_state['epoch']
+    cnn.load_state_dict(cnn.state_dict() | d_state['state_dict'])
+    optimizer.load_state_dict(d_state['optimizer'])
+    scheduler.load_state_dict(d_state['scheduler'])
+    train_loss = d_state['train_loss']
+    val_loss = d_state['val_loss']
+
+    return initial_epoch, cnn, optimizer, scheduler, train_loss, val_loss
+
+
+def data_initialisation(
+        val_frac: float,
+        spectra_path: str,
+        labels_path: str,
+        log_params: list,
+        kwargs: dict) -> tuple[DataLoader, DataLoader]:
+    """
+    Initialises training and validation data
+
+    Parameters
+    ----------
     val_frac : float
         Fraction of validation data
-    synth_path : string
+    spectra_path : string
         Path to synthetic data
     labels_path : string
         Path to labels
     log_params : list
         Index of each free parameter in logarithmic space
-    model_args : tuple
-        Arguments for the network
     kwargs : dictionary
         Keyword arguments for dataloader
-    architecture : Encoder | Decoder
-        Which network architecture to use
-    device : device
-        Which device type PyTorch should use
 
     Returns
     -------
-    tuple[Encoder | Decoder, Optimizer, lr_scheduler, DataLoader, DataLoader]
-        Neural network, optimizer, scheduler and
-        dataloaders for the training and validation datasets
+    tuple[DataLoader, DataLoader]
+        Dataloaders for the training and validation datasets
     """
     # Fetch dataset & create train & val data
-    dataset = SpectrumDataset(synth_path, labels_path, log_params)
+    dataset = SpectrumDataset(spectra_path, labels_path, log_params)
     val_amount = int(len(dataset) * val_frac)
 
     train_dataset, val_dataset = random_split(dataset, [len(dataset) - val_amount, val_amount])
@@ -550,14 +650,45 @@ def network_initialisation(
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, **kwargs)
     val_loader = DataLoader(val_dataset, batch_size=128, shuffle=True, **kwargs)
 
+    return train_loader, val_loader
+
+
+def network_initialisation(
+        spectra_size: int,
+        learning_rate: float,
+        model_args: tuple,
+        architecture: Type[Encoder | Decoder],
+        device: torch.device
+) -> tuple[
+    Encoder | Decoder,
+    optim.Optimizer,
+    optim.lr_scheduler.ReduceLROnPlateau
+]:
+    """
+    Initialises neural network for either encoder or decoder CNN
+
+    Parameters
+    ----------
+    spectra_size : integer
+        Size of the spectra
+    learning_rate : float
+        Learning rate of the optimizer
+    model_args : tuple
+        Arguments for the network
+    architecture : Encoder | Decoder
+        Which network architecture to use
+    device : device
+        Which device type PyTorch should use
+
+    Returns
+    -------
+    tuple[Encoder | Decoder, Optimizer, lr_scheduler]
+        Neural network, optimizer, scheduler and
+    """
     # Initialise the CNN
-    cnn = architecture(dataset[0][0].size(0), *model_args)
+    cnn = architecture(spectra_size, *model_args)
     cnn.to(device)
     optimizer = optim.Adam(cnn.parameters(), lr=learning_rate, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, verbose=True)
 
-    print(f'{cnn.__class__.__name__}:\n'
-          f'Training data size: {len(train_dataset)}\t'
-          f'Validation data size: {len(val_dataset)}\n')
-
-    return cnn, optimizer, scheduler, train_loader, val_loader
+    return cnn, optimizer, scheduler

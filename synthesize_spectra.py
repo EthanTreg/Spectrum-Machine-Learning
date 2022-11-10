@@ -7,29 +7,7 @@ import numpy as np
 from astropy.io import fits
 
 from src.data_preprocessing import spectrum_data
-
-
-def progress_bar(i: int, total: int):
-    """
-    Terminal progress bar
-
-    Parameters
-    ----------
-    i : int
-        Current progress
-    total : int
-        Completion number
-    """
-    length = 50
-    i += 1
-
-    filled = int(i * length / total)
-    percent = i * 100 / total
-    bar_fill = '█' * filled + '-' * (length - filled)
-    print(f'\rProgress: |{bar_fill}| {int(percent)}%\t', end='')
-
-    if i == total:
-        print()
+from src.utils.utils import progress_bar
 
 
 def initialise_xspec(model_type: str = 'tbabs(simplcutx(ezdiskbb))') -> xspec.Model:
@@ -108,8 +86,8 @@ def generate_synth(current_num: int,
         Synthetic params
     """
     load_frequency = 100
-    data_dir = '../../../Documents/Nicer_Data/ethan/'
-    labels_path = '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
+    data_dir = '../../Documents/Nicer_Data/ethan/'
+    labels_path = 'data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
     fixed_params = {4: 0, 5: 100}
     params = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0} | fixed_params
     synth_params = np.empty((0, len(params) - len(fixed_params)))
@@ -280,7 +258,7 @@ def main():
     clear_synth = False
     batches = 1000
     total_synth_num = 1e5
-    synth_dir = '../data/synth_spectra/'
+    synth_dir = './data/synth_spectra/'
     synth_data = './data/synth_spectra.npy'
     param_limits = [
         {'id': 1, 'low': 5e-3, 'high': 75, 'log': True},
@@ -325,8 +303,8 @@ def main():
             fix_names(current_num, total_synth_num, synth_dir)
 
         print(f'\nBatch {i + 1} / {batches} {((i + 1) / batches) * 100:.1f} %'
-              f'\tSuccess: {success} / {total_synth_num * i / batches}'
-              f'{100 * success * batches / (total_synth_num * i):.1f} %'
+              f'\tSuccess: {success} / {int(total_synth_num * (i + 1) / batches)} '
+              f'{100 * success * batches / (total_synth_num * (i + 1)):.1f} %'
               f'\tTime: {time() - t_initial:.2f} s')
 
 

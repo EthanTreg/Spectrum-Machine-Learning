@@ -86,6 +86,8 @@ class Decoder(nn.Module):
 
     Attributes
     ----------
+    phase : float
+        Blend constant between progressive learning
     layers : list[dictionary]
         Layers with layer parameters
     network : ModuleList
@@ -108,6 +110,8 @@ class Decoder(nn.Module):
             Path to the config file
         """
         super().__init__()
+        self.phase = 0
+
         # Construct layers in CNN
         self.layers, self.network = create_network(
             num_params,
@@ -132,8 +136,13 @@ class Decoder(nn.Module):
         outputs = []
 
         for i, layer in enumerate(self.layers):
-            if layer['type'] == 'shortcut':
+            # Concatenation layers
+            if layer['type'] == 'concatenate':
                 x = torch.cat((x, outputs[layer['layer']]), dim=1)
+            # Shortcut layers
+            if layer['type'] == 'shortcut':
+                x = self.phase * x + (1 - self.phase) * outputs[layer['layer']]
+            # All other layers
             else:
                 x = self.network[i](x)
 

@@ -10,7 +10,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from src.utils.networks import Encoder, Decoder
-from src.utils.utils import PyXspecFitting, network_initialisation
+from src.utils.utils import PyXspecFitting, data_initialisation, \
+    network_initialisation, load_network
 
 
 def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, axes: Axes):
@@ -30,8 +31,14 @@ def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, ax
     """
     x_data = np.load('../data/spectra_x_axis.npy')
 
+    # Make sure x data size is even
     if x_data.size % 2 != 0:
-        x_data = np.append(x_data[:-2], np.mean(x_data[ -2:]))
+        x_data = np.append(x_data[:-2], np.mean(x_data[-2:]))
+
+    # Make sure x data size is of the same size as y data
+    if x_data.size != y_data.size and x_data.size % y_data.size == 0:
+        x_data = x_data.reshape(int(x_data.size / y_data.size), - 1)
+        x_data = np.mean(x_data, axis=0)
 
     axes.set_title(f'Epoch: {epoch}', fontsize=16)
     axes.scatter(x_data, y_data, label='Spectrum')
@@ -207,7 +214,7 @@ def test(
         for spectra, params, _ in loader:
             spectra = spectra.to(device)
 
-            # Generate predictions and loss if network is a decoder
+            # Generate parameter predictions if encoder, else generate spectra and calculate loss
             if isinstance(cnn, Encoder):
                 output = cnn(spectra)
                 output[:, log_params] = 10 ** output[:, log_params]
@@ -249,32 +256,52 @@ def test(
     return loss / len(loader)
 
 
-def main():
+def learning(
+        load: bool,
+        save: bool,
+        load_num: int,
+        save_num: int,
+        num_epochs: int,
+        learning_rate: float,
+        config_path: str) -> tuple[list, list, np.ndarray, np.ndarray]:
     """
-    Main function for spectrum machine learning
+    Trains & validates network, used for progressive learning
+
+    Parameters
+    ----------
+    load : boolean
+        If a previous state should be loaded
+    save : boolean
+        If new states should be saved
+    load_num : integer
+        The file number for the previous state
+    save_num : integer
+        The file number to save the new state
+    num_epochs : integer
+        Number of epochs to train
+    learning_rate : float
+        Learning rate for the optimizer
+    config_path : string
+        Path to the network config file
+
+    Returns
+    -------
+    tuple[list, list, ndarray, ndarray]
+        Train losses, validation losses, spectra & spectra predictions
     """
     # Variables
-    save = True
-    load = True
-    num_epochs = 200
     val_frac = 0.1
-    learning_rate = 1e-5
-    config_path = '../decoder.json'
     synth_path = '../data/synth_spectra.npy'
-    # spectra_path = '../data/preprocessed_spectra.npy'
     synth_params_path = '../data/synth_spectra_params.npy'
-    # params_path = '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
-    # data_dir = '../../../Documents/Nicer_Data/ethan/'
-    fix_params = np.array([[4, 0], [5, 100]])
     log_params = [0, 2, 3, 4]
 
     # Constants
     initial_epoch = 0
     states_dir = '../model_states/'
-    plots_dir = '../plots/'
     train_loss = []
     val_loss = []
-    # root_dir = os.path.dirname(os.path.abspath(__file__))
+    fix_params = np.array([[4, 0], [5, 100]])
+    phases = np.clip(np.linspace(0, 2, num_epochs), a_min=0, a_max=1)
 
     # Xspec initialization
     model = PyXspecFitting('tbabs(simplcutx(ezdiskbb))', fix_params)
@@ -283,18 +310,27 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
 
-    # Initialize decoder
-    decoder, d_optimizer, d_scheduler, d_train_loader, d_val_loader = network_initialisation(
-        learning_rate,
+    # Initialize datasets
+    d_train_loader, d_val_loader = data_initialisation(
         val_frac,
         synth_path,
         synth_params_path,
         log_params,
+        kwargs
+    )
+
+    # Initialize decoder
+    decoder, d_optimizer, d_scheduler = network_initialisation(
+        d_train_loader.dataset[0][0].size(0),
+        learning_rate,
         (model.param_limits.shape[0], config_path),
-        kwargs,
         Decoder,
         device
     )
+
+    print(f'{decoder.__class__.__name__}:\n'
+          f'Training data size: {len(d_train_loader.dataset)}\t'
+          f'Validation data size: {len(d_val_loader.dataset)}\n')
 
     # Create folder to save network progress
     if not os.path.exists(states_dir):
@@ -302,18 +338,19 @@ def main():
 
     # Load states from previous training
     if load:
-        d_state = torch.load(f'{states_dir}{type(decoder).__name__}.pth')
-        initial_epoch = d_state['epoch']
-        decoder.load_state_dict(d_state['state_dict'])
-        d_optimizer.load_state_dict(d_state['optimizer'])
-        d_scheduler.load_state_dict(d_state['scheduler'])
-        train_loss = d_state['train_loss']
-        val_loss = d_state['val_loss']
+        initial_epoch, decoder, d_optimizer, d_scheduler, train_loss, val_loss = load_network(
+            load_num,
+            states_dir,
+            decoder,
+            d_optimizer,
+            d_scheduler
+        )
 
     # Train for each epoch
     for epoch in range(num_epochs - initial_epoch):
         t_initial = time()
         epoch += initial_epoch
+        decoder.phase = phases[epoch]
 
         # Validate CNN
         val_loss.append(validate(device, d_val_loader, decoder)[0])
@@ -333,7 +370,7 @@ def main():
                 'val_loss': val_loss,
             }
 
-            torch.save(d_state, f'{states_dir}{type(decoder).__name__}.pth')
+            torch.save(d_state, f'{states_dir}{type(decoder).__name__}_{save_num}.pth')
 
         print(f'Epoch [{epoch + 1}/{num_epochs}]\t'
               f'Training loss: {train_loss[-1]:.3e}\t'
@@ -345,6 +382,39 @@ def main():
     val_loss.append(loss)
     print(f'\nFinal validation loss: {val_loss[-1]:.3e}')
 
+    return train_loss, val_loss, spectra, outputs
+
+
+def main():
+    """
+    Main function for spectrum machine learning
+    """
+    # Variables
+    load = False
+    save = True
+    config_path = '../decoder.json'
+    load_num = 6
+    save_num = 6
+    num_epochs = 200
+    learning_rate = 1e-5
+    # spectra_path = '../data/preprocessed_spectra.npy'
+    # params_path = '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
+    # data_dir = '../../../Documents/Nicer_Data/ethan/'
+
+    # Constants
+    plots_dir = '../plots/'
+    # root_dir = os.path.dirname(os.path.abspath(__file__))
+
+    train_loss, val_loss, spectra, outputs = learning(
+        load,
+        save,
+        load_num,
+        save_num,
+        num_epochs,
+        learning_rate,
+        config_path,
+    )
+
     # Create plots directory
     if not os.path.exists(plots_dir):
         os.makedirs(plots_dir)
@@ -355,7 +425,7 @@ def main():
 
     # Plot reconstructions
     for i in range(axes.size):
-        plot_reconstructions(num_epochs, spectra[i], outputs[i], axes[i])
+        plot_reconstructions(epochs[-1], spectra[i], outputs[i], axes[i])
 
     plt.savefig(plots_dir + 'Reconstructions.png')
 

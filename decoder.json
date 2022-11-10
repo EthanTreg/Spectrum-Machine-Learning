@@ -5,7 +5,7 @@
     "layers": [
         {
             "type": "linear",
-            "factor": 0.125
+            "factor": 0.0625
         },
         {
             "type": "linear",
@@ -34,11 +34,10 @@
             "filters": 32
         },
         {
-            "type": "upsample"
-        },
-        {
-            "type": "convolutional",
-            "filters": 1
+            "type": "conv_upscale",
+            "filters": 2,
+            "batch_norm": 0,
+            "activation": 1
         },
         {
             "type": "GRU"
