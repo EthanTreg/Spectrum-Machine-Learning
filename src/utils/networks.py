@@ -1,7 +1,8 @@
 import torch
 from torch import nn, Tensor
 
-from src.utils.utils import PyXspecFitting, create_network
+from src.utils.utils import PyXspecFitting
+from src.utils.network_utils import create_network
 
 
 class Encoder(nn.Module):

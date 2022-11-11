@@ -3,6 +3,7 @@
 **/*.rmf
 **/*.jsgrp
 **/*test*
+**/*temp*
 /.idea
 /data/
 /plots/

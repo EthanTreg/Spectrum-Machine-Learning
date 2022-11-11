@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 
-from src.utils.utils import progress_bar
+from src.utils.data_utils import progress_bar
 
 
 def channel_kev(channel: np.ndarray) -> np.ndarray:
