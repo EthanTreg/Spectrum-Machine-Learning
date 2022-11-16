@@ -247,7 +247,7 @@ def initialization(
     decoder, d_optimizer, d_scheduler = network_initialisation(
         d_train_loader.dataset[0][0].size(0),
         learning_rate,
-        (d_train_loader.dataset[0][1].size(1), config_path),
+        (d_train_loader.dataset[0][1].size(0), config_path),
         Decoder,
     )
     decoder = decoder.to(device)
@@ -310,9 +310,9 @@ def main():
     """
     # Variables
     load_num = 0
-    save_num = 0
+    save_num = 1
     num_epochs = 200
-    learning_rate = 1.5e-3
+    learning_rate = 2e-4
     config_path = '../network_configs/decoder.json'
     # spectra_path = '../data/preprocessed_spectra.npy'
     # params_path = '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
@@ -335,7 +335,7 @@ def main():
         os.makedirs(plots_dir)
 
     # Initialize reconstructions plots
-    _, axes = plt.subplots(4, 3, figsize=(24, 12), constrained_layout=True)
+    _, axes = plt.subplots(4, 4, figsize=(24, 12), constrained_layout=True)
     axes = axes.flatten()
 
     # Plot reconstructions

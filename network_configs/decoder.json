@@ -24,14 +24,14 @@
         },
         {
             "type": "convolutional",
-            "filters": 16
+            "filters": 32
         },
         {
             "type": "upsample"
         },
         {
             "type": "convolutional",
-            "filters": 32
+            "filters": 64
         },
         {
             "type": "conv_upscale",

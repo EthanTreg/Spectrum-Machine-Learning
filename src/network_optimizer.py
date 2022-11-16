@@ -1,6 +1,8 @@
+import os
 import json
 
 import torch
+import joblib
 import optuna
 
 from src.spectrum_fit_cnn import train, validate
@@ -93,6 +95,7 @@ def objective(
     filters_1 = trial.suggest_int('filters_1', 1, 128)
     filters_2 = trial.suggest_int('filters_2', 1, 128)
 
+    # Build temporary network for testing
     build_network(config_path, [filters_1, filters_2], [conv_layers_1, conv_layers_2])
 
     # Initialize decoder
@@ -130,11 +133,18 @@ def main():
     Main function for optimizing networks
     """
     # Variables
+    load = True
+    save = True
     num_epochs = 50
-    num_trials = 5
+    num_trials = 30
+    min_trials = 5
     synth_path = '../data/synth_spectra.npy'
     synth_params_path = '../data/synth_spectra_params.npy'
     log_params = [0, 2, 3, 4]
+
+    # Constants
+    initial = 0
+    model_dir = '../model_states/'
 
     # Set device to GPU if available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -148,24 +158,42 @@ def main():
         kwargs,
     )
 
-    # Start trials
-    pruner = optuna.pruners.MedianPruner(n_startup_trials=2, n_warmup_steps=10, n_min_trials=2)
-    study = optuna.create_study(direction='minimize', pruner=pruner)
-    study.optimize(lambda x: objective(x, num_epochs, loaders, device), n_trials=num_trials)
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+
+    # Find most recent file
+    while os.path.exists(model_dir + f'trial_{initial}'):
+        initial += 1
+
+    if initial != 0 and load:
+        study, pruner = joblib.load(model_dir + f'trial_{initial - 1}')
+    else:
+        # Start trials
+        pruner = optuna.pruners.PatientPruner(
+            optuna.pruners.MedianPruner(
+                n_startup_trials=min_trials,
+                n_warmup_steps=10,
+                n_min_trials=min_trials,
+            ),
+            patience=3,
+        )
+        study = optuna.create_study(direction='minimize', pruner=pruner)
+
+    for i in range(initial, num_trials):
+        study.optimize(lambda x: objective(x, num_epochs, loaders, device), n_trials=1)
+
+        if save:
+            state = {'study': study, 'pruner': pruner}
+            joblib.dump(state, model_dir + f'trial_{initial + i}')
 
     print(study.best_params)
 
-    fig1 = optuna.visualization.plot_param_importances(study)
-    fig2 = optuna.visualization.plot_contour(study, params=['filters_1', 'filters_2'])
-    fig3 = optuna.visualization.plot_contour(study, params=['conv_layers_1', 'conv_layers_2'])
-    fig4 = optuna.visualization.plot_parallel_coordinate(
+    optuna.visualization.plot_param_importances(study).show()
+    optuna.visualization.plot_contour(study).show()
+    optuna.visualization.plot_parallel_coordinate(
         study,
         params=['learning_rate', 'filters_1', 'filters_2', 'conv_layers_1', 'conv_layers_2']
-    )
-    fig1.show()
-    fig2.show()
-    fig3.show()
-    fig4.show()
+    ).show()
 
 
 if __name__ == '__main__':

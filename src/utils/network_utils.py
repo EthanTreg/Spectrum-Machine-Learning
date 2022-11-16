@@ -188,7 +188,7 @@ def create_network(
 
             module.add_module(f'conv_{i}', conv)
             module.add_module(f'dropout_{i}', nn.Dropout1d(dropout_prob))
-            # module.add_module(f'batch_norm_{i}', nn.BatchNorm1d(dims[-1]))
+            module.add_module(f'batch_norm_{i}', nn.BatchNorm1d(dims[-1]))
             module.add_module(f'ELU_{i}', nn.ELU())
 
         # GRU layer
