@@ -1,0 +1,44 @@
+{
+  "net": {
+    "dropout_prob": 0.1
+  },
+  "layers": [
+    {
+      "type": "reshape",
+      "output": [1, -1]
+    },
+    {
+      "type": "GRU"
+    },
+    {
+      "type": "convolutional",
+      "filters": 4,
+      "kernel": 7,
+      "batch_norm": 1
+    },
+    {
+      "type": "convolutional",
+      "filters": 16,
+      "kernel": 3
+    },
+    {
+      "type": "pool"
+    },
+    {
+      "type": "reshape",
+      "output": [-1]
+    },
+    {
+      "type": "linear",
+      "features": 128
+    },
+    {
+      "type": "linear",
+      "features": 64
+    },
+    {
+      "type": "linear",
+      "factor": 1
+    }
+  ]
+}

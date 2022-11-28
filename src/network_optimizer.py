@@ -6,10 +6,9 @@ import joblib
 import optuna
 
 from src.spectrum_fit_cnn import train, validate
-from src.utils.networks import Decoder
+from src.utils.networks import Network
 from src.utils.utils import progress_bar
 from src.utils.data_utils import data_initialisation
-from src.utils.network_utils import network_initialisation
 
 
 def build_network(config_path: str, filters: list[int], conv_layers: list[int]):
@@ -86,7 +85,7 @@ def objective(
         Final validation loss of the trial network
     """
     # Variables
-    config_path = '../network_configs/decoder.json'
+    config_dir = '../network_configs/'
 
     # Trial parameters
     learning_rate = trial.suggest_float('learning_rate', 1e-6, 1e-3, log=True)
@@ -96,23 +95,27 @@ def objective(
     filters_2 = trial.suggest_int('filters_2', 1, 128)
 
     # Build temporary network for testing
-    build_network(config_path, [filters_1, filters_2], [conv_layers_1, conv_layers_2])
+    build_network(
+        f'{config_dir}/Decoder.json',
+        [filters_1, filters_2],
+        [conv_layers_1, conv_layers_2]
+    )
 
     # Initialize decoder
-    decoder, optimizer, scheduler = network_initialisation(
+    decoder = Network(
+        loaders[0].dataset[0][1].size(0),
         loaders[0].dataset[0][0].size(0),
         learning_rate,
-        (loaders[0].dataset[0][1].size(0), f'{config_path[:-5]}_temp.json'),
-        Decoder,
-        device,
-    )
+        'Decoder',
+        config_dir,
+    ).to(device)
 
     # Train for each epoch
     for epoch in range(num_epochs):
         # Train CNN
-        train(device, loaders[0], decoder, optimizer)
+        train(device, loaders[0], decoder)
         loss = validate(device, loaders[1], decoder)[0]
-        scheduler.step(loss)
+        decoder.scheduler.step(loss)
         trial.report(loss, epoch)
 
         # End bad trials early

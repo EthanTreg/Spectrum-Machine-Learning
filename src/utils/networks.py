@@ -1,134 +1,92 @@
 import torch
-from torch import nn, Tensor
+from torch import nn, optim, Tensor
 
-from src.utils.utils import PyXspecFitting
 from src.utils.network_utils import create_network
 
 
-class Encoder(nn.Module):
+class Network(nn.Module):
     """
-    Constructs a CNN network to predict model parameters from spectrum data
+    Constructs a CNN network from a configuration file
 
     Attributes
     ----------
-    model : XspecModel
-        PyXspec model
-    conv1 : nn.Sequential
-        First convolutional layer
-    conv2 : nn.Sequential
-        Second convolutional layer
-    downscale : nn.Sequential
-        Fully connected layer to produce parameter predictions
-
-    Methods
-    -------
-    forward(x)
-        Forward pass of decoder
-    """
-    def __init__(self, spectra_size: int, model: PyXspecFitting):
-        """
-        Parameters
-        ----------
-        spectra_size : int
-            number of data points in spectra
-        model : XspecModel
-            PyXspec model
-        """
-        super().__init__()
-        self.model = model
-        test_tensor = torch.empty((1, 1, spectra_size))
-
-        # Construct layers in CNN
-        self.conv1 = nn.Sequential(
-            nn.Conv1d(in_channels=1, out_channels=4, kernel_size=7, padding='same'),
-            nn.ReLU(),
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(in_channels=4, out_channels=16, kernel_size=3, padding='same'),
-            nn.ReLU(),
-        )
-        self.pool = nn.MaxPool1d(kernel_size=2)
-
-        conv_output = self.pool(self.conv2(self.conv1(test_tensor))).shape
-        self.downscale = nn.Sequential(
-            nn.Linear(in_features=conv_output[1] * conv_output[2], out_features=128),
-            nn.ReLU(),
-            nn.Linear(in_features=128, out_features=64),
-            nn.ReLU(),
-            nn.Linear(in_features=64, out_features=model.param_limits.shape[0]),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        """
-        Forward pass of the CNN taking spectrum input and producing parameter predictions output
-
-        Parameters
-        ----------
-        x : tensor
-            Input spectrum
-
-        Returns
-        -------
-        tensor
-            Parameter predictions
-        """
-        x = torch.unsqueeze(x, dim=1)
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.pool(x)
-        x = x.view(x.size(0), -1)
-        x = self.downscale(x)
-        return x
-
-
-class Decoder(nn.Module):
-    """
-    Constructs a CNN network to generate spectra from model parameters
-
-    Attributes
-    ----------
+    encoder : boolean
+        If network is an encoder
     layers : list[dictionary]
         Layers with layer parameters
     network : ModuleList
         Network construction
+    optimizer : Optimizer
+        Network optimizer
+    scheduler : ReduceLROnPlateau
+        Optimizer scheduler
 
     Methods
     -------
     forward(x)
-        Forward pass of decoder
+        Forward pass of CNN
     """
-    def __init__(self, spectra_size: int, num_params: int, config_file: str):
+    def __init__(
+            self,
+            spectra_size: int,
+            params_size: int,
+            learning_rate: float,
+            name: str,
+            config_dir: str):
         """
         Parameters
         ----------
-        spectra_size : integer
-            number of data points in spectra
-        num_params : integer
-            Number of input parameters
-        config_file : string
-            Path to the config file
+        spectra_size : int
+            Size of the input tensor
+        params_size : int
+            Size of the output tensor
+        learning_rate : float
+            Optimizer initial learning rate
+        name : str
+            Name of the network
+        config_dir : string
+            Path to the network config directory
         """
         super().__init__()
+        self.name = name
+
+        # If network is an encoder
+        if 'Encoder' in name:
+            self.encoder = True
+            input_size = spectra_size
+            output_size = params_size
+        else:
+            self.encoder = False
+            input_size = params_size
+            output_size = spectra_size
+
         # Construct layers in CNN
         self.layers, self.network = create_network(
-            num_params,
-            spectra_size,
-            config_file,
+            input_size,
+            output_size,
+            f'{config_dir}{name}.json',
+        )
+
+        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate, weight_decay=1e-5)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            factor=0.5,
+            verbose=True,
         )
 
     def forward(self, x: Tensor) -> Tensor:
         """
-        Forward pass of the CNN taking parameter inputs and producing a spectrum output
+        Forward pass of the CNN
 
         Parameters
         ----------
-        x : tensor
-            Input parameters
+        x : Tensor
+            Input tensor
 
         Returns
         -------
-        tensor
-            Generated spectrum
+        Tensor
+            Output tensor from the CNN
         """
         outputs = []
 
@@ -145,4 +103,4 @@ class Decoder(nn.Module):
 
             outputs.append(x)
 
-        return torch.squeeze(x, dim=1)
+        return x

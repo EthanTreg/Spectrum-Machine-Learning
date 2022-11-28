@@ -33,7 +33,14 @@ class SpectrumDataset(Dataset):
         log_params : list
             Index of each free parameter in logarithmic space
         """
-        self.spectra = torch.from_numpy(np.log10(np.maximum(1e-8, np.load(data_file)))).float()
+        self.spectra = np.load(data_file)
+
+        if np.min(self.spectra) < 0:
+            spectra = np.swapaxes(self.spectra, 0, 1)
+            min_count = np.min(np.abs(spectra), where=spectra > 0, initial=np.max(spectra), axis=0)
+            self.spectra = np.swapaxes(np.maximum(spectra, min_count), 0, 1)
+
+        self.spectra = torch.from_numpy(np.log10(self.spectra)).float()
         self.spectra = (self.spectra - torch.min(self.spectra)) / \
                        (torch.max(self.spectra) - torch.min(self.spectra))
 

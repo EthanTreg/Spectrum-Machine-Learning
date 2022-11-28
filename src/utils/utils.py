@@ -154,14 +154,12 @@ def progress_bar(i: int, total: int, text: str = ''):
         print()
 
 
-def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, axes: Axes):
+def plot_reconstructions(y_data: np.ndarray, y_recon: np.ndarray, axes: Axes):
     """
     Plots reconstructions for a given epoch
 
     Parameters
     ----------
-    epoch : integer
-        Epoch number
     y_data : ndarray
         Spectrum
     y_recon : ndarray
@@ -180,7 +178,6 @@ def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, ax
         x_data = x_data.reshape(int(x_data.size / y_data.size), - 1)
         x_data = np.mean(x_data, axis=0)
 
-    axes.set_title(f'Epoch: {epoch}', fontsize=16)
     axes.scatter(x_data, y_data, label='Spectrum')
     axes.scatter(x_data, y_recon, label='Reconstruction')
     axes.set_xlabel('Energy (keV)', fontsize=12)
@@ -188,14 +185,12 @@ def plot_reconstructions(epoch: int, y_data: np.ndarray, y_recon: np.ndarray, ax
     axes.legend(fontsize=16)
 
 
-def plot_loss(plots_dir: str, train_loss: list, val_loss: list):
+def plot_loss(train_loss: list, val_loss: list):
     """
     Plots training and validation loss as a function of epochs
 
     Parameters
     ----------
-    plots_dir : string
-        Directory to save plots
     train_loss : list
         Training losses
     val_loss : list
@@ -214,4 +209,3 @@ def plot_loss(plots_dir: str, train_loss: list, val_loss: list):
         transform=plt.gca().transAxes
     )
     plt.legend(fontsize=20)
-    plt.savefig(plots_dir + 'Epoch_Loss.png')

@@ -24,23 +24,28 @@
         },
         {
             "type": "convolutional",
-            "filters": 32
+            "filters": 64,
+            "batch_norm": 1
         },
         {
             "type": "upsample"
         },
         {
             "type": "convolutional",
-            "filters": 64
+            "filters": 64,
+            "batch_norm": 1
         },
         {
             "type": "conv_upscale",
             "filters": 2,
-            "batch_norm": 0,
             "activation": 1
         },
         {
-            "type": "GRU"
+            "type": "gru"
+        },
+        {
+            "type": "reshape",
+            "output": [-1]
         }
     ]
 }
