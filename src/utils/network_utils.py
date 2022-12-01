@@ -51,7 +51,11 @@ def create_network(
         kwargs['i'] = i
         kwargs['module'] = nn.Sequential()
 
-        kwargs = getattr(layer_utils, layer['type'])(kwargs, layer)
+        try:
+            kwargs = getattr(layer_utils, layer['type'])(kwargs, layer)
+        except AttributeError as error:
+            print(f"ERROR: Unknown layer: {layer['type']}")
+            raise error
 
         module_list.append(kwargs['module'])
 

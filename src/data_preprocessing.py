@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 
-from src.utils.data_utils import progress_bar
+from src.utils.utils import progress_bar
 
 
 def channel_kev(channel: np.ndarray) -> np.ndarray:
@@ -23,7 +23,7 @@ def channel_kev(channel: np.ndarray) -> np.ndarray:
     return (channel * 10 + 5) / 1e3
 
 
-def binning(
+def create_bin(
         x_data: np.ndarray,
         y_data: np.ndarray,
         clow: float,
@@ -59,6 +59,37 @@ def binning(
     y_data = np.sum(y_data.reshape(-1, int(nchan)), axis=1)
 
     return x_data, y_data
+
+
+def binning(x_data: np.ndarray, y_data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Bins data to match binning performed in Xspec
+
+    Parameters
+    ----------
+    x_data : ndarray
+        x_data to be binned
+    y_data : ndarray
+        y_data to be binned
+
+    Returns
+    -------
+    tuple[ndarray, ndarray]
+        Binned x & y data
+    """
+    # Initialize variables
+    x_bin = np.array(())
+    y_bin = np.array(())
+    bins = np.array([[0, 20, 248, 600, 1200, 1494, 1500], [2, 3, 4, 5, 6, 2, 1]], dtype=int)
+
+    # Bin data
+    for i in range(bins.shape[1] - 1):
+        x_new, y_new = create_bin(x_data, y_data, bins[0, i], bins[0, i + 1], bins[1, i])
+        y_new /= bins[1, i] * 1e-2
+        x_bin = np.append(x_bin, x_new)
+        y_bin = np.append(y_bin, y_new)
+
+    return x_bin, y_bin
 
 
 def spectra_names(data_dir: str) -> np.ndarray:
@@ -105,10 +136,6 @@ def spectrum_data(
     (ndarray, ndarray, int)
         Binned spectrum data and number of detectors
     """
-    # Initialize variables
-    x_bin = np.array(())
-    y_bin = np.array(())
-    bins = np.array([[0, 20, 248, 600, 1200, 1494, 1500], [2, 3, 4, 5, 6, 2, 1]], dtype=int)
 
     if not cut_off:
         cut_off = [0.3, 10]
@@ -140,12 +167,7 @@ def spectrum_data(
     else:
         y_data = (spectrum.RATE - background.RATE).to_numpy() / detectors
 
-    # Bin data
-    for i in range(bins.shape[1] - 1):
-        x_new, y_new = binning(x_data, y_data, bins[0, i], bins[0, i + 1], bins[1, i])
-        y_new /= bins[1, i] * 1e-2
-        x_bin = np.append(x_bin, x_new)
-        y_bin = np.append(y_bin, y_new)
+    x_bin, y_bin = binning(x_data, y_data)
 
     cut_indices = np.argwhere((x_bin < cut_off[0]) | (x_bin > cut_off[1]))
     x_bin = np.delete(x_bin, cut_indices)

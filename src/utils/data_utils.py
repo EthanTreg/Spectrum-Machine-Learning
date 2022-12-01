@@ -14,6 +14,8 @@ class SpectrumDataset(Dataset):
         Spectra dataset
     params : tensor
         Parameters for each spectra if supervised
+    transform : list[list[ndarray]]
+        Min and max spectral range and mean & standard deviation of parameters
     names : ndarray
         Names of each spectrum
 
@@ -22,7 +24,12 @@ class SpectrumDataset(Dataset):
     downscaler(downscales)
         Downscales input spectra
     """
-    def __init__(self, data_file: str, labels_file: str, log_params: list):
+    def __init__(
+            self,
+            data_file: str,
+            labels_file: str,
+            log_params: list,
+            transform: list[list[np.ndarray]] = None):
         """
         Parameters
         ----------
@@ -32,43 +39,66 @@ class SpectrumDataset(Dataset):
             Path to the labels file, if none, then an unsupervised approach is used
         log_params : list
             Index of each free parameter in logarithmic space
+        transform : list[ndarray], default = None
+            Min and max spectral range and mean & standard deviation of parameters
+            used for transformation after log
         """
-        self.spectra = np.load(data_file)
+        self.transform = transform
+        spectra = np.load(data_file)
 
-        if np.min(self.spectra) < 0:
-            spectra = np.swapaxes(self.spectra, 0, 1)
-            min_count = np.min(np.abs(spectra), where=spectra > 0, initial=np.max(spectra), axis=0)
-            self.spectra = np.swapaxes(np.maximum(spectra, min_count), 0, 1)
+        # Set negative values equal to minimum real value
+        if np.min(spectra) < 0:
+            spectra = np.swapaxes(spectra, 0, 1)
+            min_count = np.min(spectra, where=spectra > 0, initial=np.max(spectra), axis=0)
+            spectra = np.swapaxes(np.maximum(spectra, min_count), 0, 1)
 
-        self.spectra = torch.from_numpy(np.log10(self.spectra)).float()
-        self.spectra = (self.spectra - torch.min(self.spectra)) / \
-                       (torch.max(self.spectra) - torch.min(self.spectra))
+        spectra = np.log10(spectra)
 
+        # Get spectra min and max values if transformation not supplied
+        if transform:
+            spectra_transform = transform[0]
+        else:
+            spectra_transform = [np.min(spectra), np.max(spectra)]
+            self.transform = [spectra_transform]
+
+        # Scale spectra between 0 and 1
+        self.spectra = torch.from_numpy(
+            (spectra - spectra_transform[0]) / (spectra_transform[1] - spectra_transform[0])
+        ).float()
+
+        # Make sure spectra length is even
         if self.spectra.size(1) % 2 != 0:
             self.spectra = torch.cat((
                 self.spectra[:, :-2],
                 torch.mean(self.spectra[:, -2:], dim=1, keepdim=True)
             ), dim=1)
 
+        # Load spectra parameters and names
         if '.npy' in labels_file:
-            self.params = np.load(labels_file)
-            self.names = np.empty(self.spectra.size(0))
+            params = np.load(labels_file)
+            self.names = np.arange(self.spectra.size(0))
         else:
             labels = np.loadtxt(labels_file, skiprows=6, dtype=str)
-            self.params = labels[:, 9:].astype(float)
+            params = labels[:, 9:].astype(float)
             self.names = labels[:, 6]
 
-        # Scale parameters
-        self.params[:, log_params] = np.log10(self.params[:, log_params])
-        # self.params = (self.params - np.min(self.params, axis=0)) / \
-        #               (np.max(self.params, axis=0) - np.min(self.params, axis=0))
-        self.params = (self.params - np.mean(self.params, axis=0)) / np.std(self.params, axis=0)
-        self.params = torch.from_numpy(self.params).float()
+        params[:, log_params] = np.log10(params[:, log_params])
+
+        # Get parameter mean and standard deviation if transformation not supplied
+        if transform:
+            param_transform = transform[1]
+        else:
+            param_transform = [np.mean(params, axis=0), np.std(params, axis=0)]
+            self.transform.append(param_transform)
+
+        # Normalize parameters with mean of 0 and standard deviation of 1
+        params = (params - param_transform[0]) / param_transform[1]
+        self.params = torch.from_numpy(params).float()
 
     def __len__(self):
         return self.spectra.shape[0]
 
-    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, str]:
+    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, str | int]:
         """
         Gets the spectrum data for a given index
         If supervised learning return target parameters of spectrum otherwise returns spectrum name
@@ -109,7 +139,8 @@ def data_initialisation(
         labels_path: str,
         log_params: list,
         kwargs: dict,
-        val_frac: float = 0.1) -> tuple[DataLoader, DataLoader]:
+        val_frac: float = 0.1,
+        transform: list[list[np.ndarray]] = None) -> tuple[DataLoader, DataLoader]:
     """
     Initialises training and validation data
 
@@ -125,6 +156,8 @@ def data_initialisation(
         Keyword arguments for dataloader
     val_frac : float, default = 0.1
         Fraction of validation data
+    transform : list[ndarray], default = None
+        Min and max spectral range and mean & standard deviation of parameters
 
     Returns
     -------
@@ -132,14 +165,14 @@ def data_initialisation(
         Dataloaders for the training and validation datasets
     """
     # Fetch dataset & create train & val data
-    dataset = SpectrumDataset(spectra_path, labels_path, log_params)
+    dataset = SpectrumDataset(spectra_path, labels_path, log_params, transform=transform)
     val_amount = int(len(dataset) * val_frac)
 
     train_dataset, val_dataset = random_split(dataset, [len(dataset) - val_amount, val_amount])
 
     # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, **kwargs)
-    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=True, **kwargs)
+    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, **kwargs)
+    val_loader = DataLoader(val_dataset, batch_size=256, shuffle=True, **kwargs)
 
     print(f'Training data size: {len(train_dataset)}\tValidation data size: {len(val_dataset)}\n')
 

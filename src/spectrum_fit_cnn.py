@@ -1,289 +1,86 @@
 import os
-from time import time
-from multiprocessing import Process, Queue, Value
 
 import torch
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
-from torch import nn
 from torch.utils.data import DataLoader
 
 from src.utils.networks import Network
-from src.utils.data_utils import data_initialisation
 from src.utils.network_utils import load_network
+from src.utils.data_utils import data_initialisation
+from src.utils.train_utils import train_val, encoder_test, xspec_loss
 from src.utils.utils import PyXspecFitting, plot_loss, plot_reconstructions
 
 
-def train(
-        device: torch.device,
-        loader: DataLoader,
-        cnn: Network,
-        surrogate: Network = None) -> float:
+def plot_initialization(
+    prefix: str,
+    plots_dir: str,
+    losses: tuple[list, list],
+    spectra: np.ndarray,
+    outputs: np.ndarray
+):
     """
-    Trains the encoder or decoder using cross entropy or mean squared error
+    Initializes & plots reconstruction & loss plots
 
     Parameters
     ----------
-    device : device
-        Which device type PyTorch should use
-    loader : DataLoader
-        PyTorch DataLoader that contains data to train
-    cnn : CNN
-        Model to use for training
-    surrogate : Network, defualt = None
-        Surrogate network for encoder training
-
-    Returns
-    -------
-    float
-        Average loss value
-    """
-    epoch_loss = 0
-    cnn.train()
-
-    if surrogate:
-        surrogate.train()
-
-    # for param in surrogate.parameters():
-    #     param.requires_grad = False
-
-    for spectra, params, _ in loader:
-        spectra = spectra.to(device)
-
-        # If surrogate is not none, train encoder with surrogate
-        if surrogate:
-            target = spectra
-            output = surrogate(cnn(spectra))
-        else:
-            params = params.to(device)
-
-            # Train encoder with supervision or decoder
-            if cnn.encoder:
-                target = params
-                output = cnn(spectra)
-            else:
-                target = spectra
-                output = cnn(params)
-
-        loss = nn.MSELoss()(output, target)
-
-        # Optimise CNN
-        cnn.optimizer.zero_grad()
-        loss.backward()
-        cnn.optimizer.step()
-
-        epoch_loss += loss.item()
-
-    return epoch_loss / len(loader)
-
-
-def validate(
-        device: torch.device,
-        loader: DataLoader,
-        cnn: Network,
-        surrogate: Network = None) -> tuple[float, np.ndarray, np.ndarray]:
-    """
-    Validates the encoder or decoder using cross entropy or mean squared error
-
-    Parameters
-    ----------
-    device : device
-        Which device type PyTorch should use
-    loader : DataLoader
-        PyTorch DataLoader that contains data to train
-    cnn : CNN
-        Model to use for training
-    surrogate : Network, default = None
-        Surrogate network for encoder training
-
-    Returns
-    -------
-    tuple[float, ndarray, ndarray]
-        Average loss value, spectra & reconstructions
-    """
-    loss = 0
-    cnn.eval()
-
-    if surrogate:
-        surrogate.eval()
-
-    with torch.no_grad():
-        for spectra, params, _ in loader:
-            spectra = spectra.to(device)
-
-            # If surrogate is not none, train encoder with surrogate
-            if surrogate:
-                predictions = cnn(spectra)
-                output = surrogate(predictions)
-                loss += nn.MSELoss()(output, spectra).item()
-            else:
-                params = params.to(device)
-
-                # Train encoder with supervision or decoder
-                if cnn.encoder:
-                    output = cnn(spectra)
-                    loss += nn.MSELoss()(output, params).item()
-                    # loss += nn.CrossEntropyLoss()(output, params).item()
-                else:
-                    output = cnn(params)
-                    loss += nn.MSELoss()(output, spectra).item()
-
-    return loss / len(loader), spectra.cpu().numpy(), output.cpu().numpy()
-
-
-def encoder_test(
-        log_params: list[int],
-        dirs: list[str],
-        device: torch.device,
-        loader: DataLoader,
-        cnn: Network,
-        model: PyXspecFitting) -> float:
-    """
-    Tests the encoder using PyXspec
-
-    Parameters
-    ----------
-    log_params : list[integer]
-        Indices of parameters in logarithmic space
-    dirs : list[string]
-        Directory of project & dataset files
-    device : device
-        Which device type PyTorch should use
-    loader : DataLoader
-        PyTorch DataLoader that contains data to train
-    cnn : Network
-        Model to use for training
-    model : PyXspecFitting
-        PyXspec model for fit evaluation
-
-    Returns
-    -------
-    float
-        Average loss value
-    """
-    cnn.eval()
-
-    # Initialize multiprocessing variables
-    counter = Value('i', 0)
-    os.chdir(dirs[1])
-    queue = Queue()
-    loader_output = next(enumerate(loader))[1]
-    batch = loader_output[0].size(0)
-    outputs = torch.empty((0, loader_output[1].size(1)))
-
-    with torch.no_grad():
-        for spectra, _, _ in loader:
-            spectra = spectra.to(device)
-
-            # Generate parameter predictions if encoder, else generate spectra and calculate loss
-            output = cnn(spectra)
-            output[:, log_params] = 10 ** output[:, log_params]
-            outputs = torch.vstack((outputs, output))
-
-    # Initialize processes for multiprocessing of encoder loss calculation
-    processes = [Process(
-        target=model.fit_loss,
-        args=(
-            len(loader.dataset),
-            data[2],
-            outputs[batch * i:batch * (i + 1)],
-            counter,
-            queue
-        )
-    ) for i, data in enumerate(loader)]
-
-    # Start multiprocessing
-    for process in processes:
-        process.start()
-
-    # End multiprocessing
-    for process in processes:
-        process.join()
-
-    # Collect results
-    losses = [queue.get() for _ in processes]
-
-    os.chdir(dirs[0])
-
-    return sum(losses) / len(losses)
-
-
-def train_val(
-        num_epochs: int,
-        losses: tuple[list, list],
-        loaders: tuple[DataLoader, DataLoader],
-        cnn: Network,
-        device: torch.device,
-        initial_epoch: int = 0,
-        save_num: int = 0,
-        states_dir: str = None,
-        surrogate: Network = None) -> tuple[tuple[list, list], np.ndarray, np.ndarray]:
-    """
-    Trains & validates the network for each epoch
-
-    Parameters
-    ----------
-    num_epochs : integer
-        Number of epochs to train
+    prefix : string
+        Name prefix for plots
+    plots_dir : string
+        Directory to save plots
     losses : tuple[list, list]
-        Train and validation losses for each epoch
-    loaders : tuple[DataLoader, DataLoader]
-        Train and validation dataloaders
-    cnn : Network
-        CNN to use for training
-    device : device
-        Which device type PyTorch should use
-    initial_epoch : integer, default = 0
-        The epoch to start from
-    save_num : integer, default = 0
-        The file number to save the new state, if 0, nothing will be saved
-    states_dir : string, default = None
-        Path to the folder where the network state will be saved, not needed if save_num = 0
-    surrogate : Network, default = None
-        Surrogate network to use for training
-
-    Returns
-    -------
-    tuple[tuple[list, list], ndarray, ndarray]
-        Train & validation losses, spectra & reconstructions
+        Training & validation losses
+    spectra : ndarray
+        Original spectra
+    outputs : ndarray
+        Reconstructions
     """
+    text_color = '#d9d9d9'
+    matplotlib.rcParams.update({
+        'text.color': text_color,
+        'xtick.color': text_color,
+        'ytick.color': text_color,
+        'axes.labelcolor': text_color,
+        'axes.edgecolor': text_color,
+        'axes.facecolor': (0, 0, 1, 0),
+    })
 
-    # Train for each epoch
-    for epoch in range(num_epochs - initial_epoch):
-        t_initial = time()
-        epoch += initial_epoch + 1
+    # Initialize reconstructions plots
+    _, axes = plt.subplots(4, 4, figsize=(24, 12), sharex='col', gridspec_kw={'hspace': 0})
+    axes = axes.flatten()
 
-        # Validate CNN
-        losses[1].append(validate(device, loaders[1], cnn, surrogate=surrogate)[0])
-        cnn.scheduler.step(losses[1][-1])
+    # Plot reconstructions
+    for i in range(axes.size):
+        plot_reconstructions(spectra[i], outputs[i], axes[i])
 
-        # Train CNN
-        losses[0].append(train(device, loaders[0], cnn, surrogate=surrogate))
+    plt.figtext(0.5, 0.02, 'Energy (keV)', ha='center', va='center', fontsize=16)
+    plt.figtext(
+        0.02,
+        0.5,
+        'Scaled Log Counts',
+        ha='center',
+        va='center',
+        rotation='vertical',
+        fontsize=16,
+    )
 
-        # Save training progress
-        if save_num:
-            state = {
-                'epoch': epoch,
-                'state_dict': cnn.state_dict(),
-                'optimizer': cnn.optimizer.state_dict(),
-                'scheduler': cnn.scheduler.state_dict(),
-                'train_loss': losses[0],
-                'val_loss': losses[1],
-            }
+    legend = plt.figlegend(
+        *axes[0].get_legend_handles_labels(),
+        loc='lower center',
+        ncol=2,
+        bbox_to_anchor=(0.5, 0.95),
+        fontsize=16,
+        columnspacing=10,
+    )
+    legend.get_frame().set_alpha(None)
 
-            torch.save(state, f'{states_dir}{cnn.name}_{save_num}.pth')
+    plt.tight_layout(rect=[0.02, 0.02, 1, 0.96])
+    plt.savefig(f'{plots_dir}{prefix} Reconstructions.png', transparent=True)
 
-        print(f'Epoch [{epoch}/{num_epochs}]\t'
-              f'Training loss: {losses[0][-1]:.3e}\t'
-              f'Validation loss: {losses[1][-1]:.3e}\t'
-              f'Time: {time() - t_initial:.1f}')
-
-    # Final validation
-    loss, spectra, outputs = validate(device, loaders[1], cnn, surrogate=surrogate)
-    losses[1].append(loss)
-    print(f'\nFinal validation loss: {losses[1][-1]:.3e}')
-
-    return losses, spectra, outputs
+    # Plot loss over epochs
+    plot_loss(losses[0], losses[1])
+    plt.savefig(f'{plots_dir}{prefix} Loss.png', transparent=True)
 
 
 def initialization(
@@ -294,7 +91,9 @@ def initialization(
         states_dir: str,
         log_params: list,
         load_num: int = 0,
-        learning_rate: float = 2e-4) -> tuple[
+        learning_rate: float = 2e-4,
+        transform: list[list[np.ndarray]] = None,
+) -> tuple[
     int,
     tuple[list, list],
     tuple[DataLoader, DataLoader],
@@ -322,6 +121,8 @@ def initialization(
         The file number for the previous state, if 0, nothing will be loaded
     learning_rate : float, default = 2e-4
         Learning rate for the optimizer
+    transform : list[list[ndarray]], default = None
+        Min and max spectral range and mean & standard deviation of parameters
 
     Returns
     -------
@@ -342,6 +143,7 @@ def initialization(
         params_path,
         log_params,
         kwargs,
+        transform=transform,
     )
 
     # Initialize network
@@ -364,52 +166,15 @@ def initialization(
     return initial_epoch, losses, loaders, network, device
 
 
-def plot_initialization(
-    prefix: str,
-    plots_dir: str,
-    losses: tuple[list, list],
-    spectra: np.ndarray,
-    outputs: np.ndarray):
-    """
-    Initializes & plots reconstruction & loss plots
-
-    Parameters
-    ----------
-    prefix : string
-        Name prefix for plots
-    plots_dir : string
-        Directory to save plots
-    losses : tuple[list, list]
-        Training & validation losses
-    spectra : ndarray
-        Original spectra
-    outputs : ndarray
-        Reconstructions
-    """
-    # Initialize reconstructions plots
-    _, axes = plt.subplots(4, 4, figsize=(24, 12), constrained_layout=True)
-    axes = axes.flatten()
-
-    # Plot reconstructions
-    for i in range(axes.size):
-        plot_reconstructions(spectra[i], outputs[i], axes[i])
-
-    plt.savefig(f'{plots_dir}{prefix} Reconstructions.png')
-
-    # Plot loss over epochs
-    plot_loss(losses[0], losses[1])
-    plt.savefig(f'{plots_dir}{prefix} Loss.png')
-
-
 def main():
     """
     Main function for spectrum machine learning
     """
     # Variables
     e_load_num = 0
-    e_save_num = 3
-    d_load_num = 0
-    d_save_num = 6
+    e_save_num = 1
+    d_load_num = 1
+    d_save_num = 0
     num_epochs = 200
     learning_rate = 2e-4
     config_dir = '../network_configs/'
@@ -417,13 +182,17 @@ def main():
     synth_params_path = '../data/synth_spectra_params.npy'
     spectra_path = '../data/preprocessed_spectra.npy'
     params_path = '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
-    # data_dir = '../../../Documents/Nicer_Data/ethan/'
+    data_dir = '../../../Documents/Nicer_Data/spectra/'
     log_params = [0, 2, 3, 4]
+    fix_params = np.array([[4, 0], [5, 100]])
 
     # Constants
     states_dir = '../model_states/'
     plots_dir = '../plots/'
-    # root_dir = os.path.dirname(os.path.abspath(__file__))
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Initialize PyXspec model
+    model = PyXspecFitting('tbabs(simplcutx(ezdiskbb))', [root_dir, data_dir], fix_params)
 
     # Create folder to save network progress
     if not os.path.exists(states_dir):
@@ -433,9 +202,21 @@ def main():
     if not os.path.exists(plots_dir):
         os.makedirs(plots_dir)
 
+    # Initialize data & decoder
+    d_initial_epoch, d_losses, d_loaders, decoder, device = initialization(
+        'Decoder V2',
+        config_dir,
+        synth_path,
+        synth_params_path,
+        states_dir,
+        log_params,
+        load_num=d_load_num,
+        learning_rate=learning_rate,
+    )
+
     # Initialize data & encoder
     e_initial_epoch, e_losses, e_loaders, encoder, _ = initialization(
-        'Encoder V2',
+        'Encoder V3',
         config_dir,
         spectra_path,
         params_path,
@@ -445,18 +226,7 @@ def main():
         log_params,
         load_num=e_load_num,
         learning_rate=learning_rate,
-    )
-
-    # Initialize data & decoder
-    d_initial_epoch, d_losses, d_loaders, decoder, device = initialization(
-        'Decoder',
-        config_dir,
-        synth_path,
-        synth_params_path,
-        states_dir,
-        log_params,
-        load_num=d_load_num,
-        learning_rate=learning_rate,
+        transform=d_loaders[0].dataset.dataset.transform
     )
 
     # Train decoder
@@ -471,13 +241,7 @@ def main():
         states_dir,
     )
 
-    plot_initialization(
-        'Decoder',
-        plots_dir,
-        losses,
-        spectra,
-        outputs,
-    )
+    plot_initialization('Decoder', plots_dir, losses, spectra, outputs)
 
     # Train encoder
     losses, spectra, outputs = train_val(
@@ -492,24 +256,19 @@ def main():
         surrogate=decoder,
     )
 
-    # losses, spectra, outputs = train_val(
-    #     num_epochs,
-    #     losses,
-    #     e_loaders,
-    #     encoder,
-    #     device,
-    #     num_epochs,
-    #     0,
-    #     surrogate=decoder,
-    # )
+    plot_initialization('Encoder-Decoder', plots_dir, losses, spectra, outputs)
 
-    plot_initialization(
-        'Encoder-Decoder',
-        plots_dir,
-        losses,
-        spectra,
-        outputs,
+    loss = encoder_test(
+        log_params,
+        device,
+        e_loaders[1],
+        encoder,
+        model,
     )
+    print(f'\nFinal PGStat Loss: {loss:.3e}')
+
+    loss = xspec_loss(log_params, e_loaders[1], model)
+    print(f'\nXspec Fitting Loss: {loss:.3e}')
 
 
 if __name__ == '__main__':

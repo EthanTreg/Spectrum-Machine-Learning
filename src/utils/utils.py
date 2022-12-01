@@ -1,3 +1,4 @@
+import os
 from multiprocessing import Queue, Value
 
 import xspec
@@ -14,8 +15,12 @@ class PyXspecFitting:
     ----------
     model : string
         Model to use for PyXspec
+    dirs : list[string]
+        Root directory & directory for spectral data
     fix_params : ndarray
         Parameter number & value of fixed parameters
+    fix_params_index: ndarray
+        Index to insert fixed parameters into network parameter output
     param_limits : tensor
         Parameter lower & upper limits
 
@@ -26,18 +31,22 @@ class PyXspecFitting:
     fit_loss(total, names, params, counter, queue)
         Evaluates the loss using PyXspec and each predicted parameter
     """
-    def __init__(self, model: str, fix_params: np.ndarray):
+    def __init__(self, model: str, dirs: list[str], fix_params: np.ndarray):
         """
         Parameters
         ----------
         model : string
             Model to use for PyXspec
+        dirs : list[string]
+            Root directory & directory for spectral data
         fix_params : ndarray
-            Parameter number & value of fixed parameters
+            Parameter number (starting from 1) & value of fixed parameters
         """
         super().__init__()
+        self.dirs = dirs
         self.fix_params = fix_params
         self.param_limits = np.empty((0, 2))
+        self.fix_params_index = self.fix_params[:, 0] - np.arange(self.fix_params.shape[1]) - 1
 
         # PyXspec initialization
         xspec.Xset.chatter = 0
@@ -49,8 +58,10 @@ class PyXspecFitting:
 
         # Generate parameter limits
         for j in range(self.model.nParameters):
-            if j + 1 not in fix_params[:, 0]:
-                limits = np.array(self.model(j + 1).values)[[2, 5]]
+            j += 1
+
+            if j not in fix_params[:, 0]:
+                limits = np.array(self.model(j).values)[[2, 5]]
                 self.param_limits = np.vstack((self.param_limits, limits))
 
     def fit_statistic(self, params: np.ndarray) -> float:
@@ -66,8 +77,7 @@ class PyXspecFitting:
             Loss value
         """
         # Merge fixed & free parameters
-        fix_params_index = self.fix_params[0] - np.arange(self.fix_params.shape[1])
-        params = np.insert(params, fix_params_index, self.fix_params[1])
+        params = np.insert(params, self.fix_params_index, self.fix_params[:, 1])
 
         # Update model parameters
         self.model.setPars(params.tolist())
@@ -100,19 +110,20 @@ class PyXspecFitting:
             Multiprocessing queue to add PGStat loss
         """
         loss = 0
+        os.chdir(self.dirs[1])
+
+        # Limit parameters
+        margin = np.minimum(1e-6, 1e-6 * (self.param_limits[:, 1] - self.param_limits[:, 0]))
+        param_min = self.param_limits[:, 0] + margin
+        param_max = self.param_limits[:, 1] - margin
 
         # Loop through each spectrum in the batch
         for i, name in enumerate(names):
-            # Limit parameters
-            param_min = self.param_limits[:, 0] + 1e-6 * (
-                    self.param_limits[:, 1] - self.param_limits[:, 0])
-            param_max = self.param_limits[:, 1] - 1e-6 * (
-                    self.param_limits[:, 1] - self.param_limits[:, 0])
-
             params = np.clip(params, a_min=param_min, a_max=param_max)
 
             # Load spectrum
             xspec.Spectrum(name)
+            xspec.AllData.ignore('0-0.3 10-**')
 
             # Calculate fit statistic
             loss += self.fit_statistic(params[i])
@@ -127,6 +138,8 @@ class PyXspecFitting:
 
         # Average loss of batch
         queue.put(loss / len(names))
+
+        os.chdir(self.dirs[0])
 
 
 def progress_bar(i: int, total: int, text: str = ''):
@@ -180,9 +193,7 @@ def plot_reconstructions(y_data: np.ndarray, y_recon: np.ndarray, axes: Axes):
 
     axes.scatter(x_data, y_data, label='Spectrum')
     axes.scatter(x_data, y_recon, label='Reconstruction')
-    axes.set_xlabel('Energy (keV)', fontsize=12)
-    axes.set_ylabel(r'$log_{10}$ Counts ($s^{-1}$ $detector^{-1}$ $keV^{-1}$)', fontsize=12)
-    axes.legend(fontsize=16)
+    axes.locator_params(axis='y', nbins=5)
 
 
 def plot_loss(train_loss: list, val_loss: list):
@@ -208,4 +219,6 @@ def plot_loss(train_loss: list, val_loss: list):
         fontsize=16,
         transform=plt.gca().transAxes
     )
-    plt.legend(fontsize=20)
+
+    legend = plt.legend(fontsize=20)
+    legend.get_frame().set_alpha(None)

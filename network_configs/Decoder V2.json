@@ -1,0 +1,43 @@
+{
+    "net": {
+        "dropout_prob": 0.1
+    },
+    "layers": [
+        {
+            "type": "linear",
+            "factor": 0.0625
+        },
+        {
+            "type": "linear",
+            "factor": 0.125
+        },
+        {
+            "type": "linear",
+            "factor": 0.125
+        },
+        {
+            "type": "reshape",
+            "output": [1, -1]
+        },
+        {
+            "type": "conv_transpose",
+            "filters": 64
+        },
+        {
+            "type": "conv_transpose",
+            "filters": 64
+        },
+        {
+            "type": "conv_upscale",
+            "filters": 2,
+            "activation": 1
+        },
+        {
+            "type": "gru"
+        },
+        {
+            "type": "reshape",
+            "output": [-1]
+        }
+    ]
+}

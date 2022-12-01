@@ -427,7 +427,7 @@ def upsample(kwargs: dict, _: dict) -> dict:
     return kwargs
 
 
-def conv_downscale(kwargs: dict, _: dict) -> dict:
+def conv_depth_downscale(kwargs: dict, _: dict) -> dict:
     """
     Constructs depth downscaler using convolution with kernel size of 1
 
@@ -454,6 +454,59 @@ def conv_downscale(kwargs: dict, _: dict) -> dict:
 
     kwargs['module'].add_module(f"conv_downscale_{kwargs['i']}", conv)
     kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
+
+    return kwargs
+
+
+def conv_downscale(kwargs: dict, layer: dict) -> dict:
+    """
+    Constructs a convolutional layer with stride 2 for 2x downscaling
+
+    Parameters
+    ----------
+    kwargs : dictionary
+        Must contain layer number (i), dropout probability (dropout_prob),
+        dimension list (dims), sequential module (module)
+    layer : dictionary
+        Must contain number of filters (filters).
+        Can contain batch normalisation (batch_norm) else it isn't used
+
+    Returns
+    -------
+    dictionary
+        Returns the input kwargs with any changes made by the function
+    """
+    kwargs['dims'].append(layer['filters'])
+
+    conv = nn.Conv1d(
+        in_channels=kwargs['dims'][-2],
+        out_channels=kwargs['dims'][-1],
+        kernel_size=3,
+        stride=2,
+        padding=1,
+        padding_mode='replicate',
+    )
+
+    kwargs['module'].add_module(f"conv_{kwargs['i']}", conv)
+    kwargs['module'].add_module(
+        f"dropout_{kwargs['i']}",
+        nn.Dropout1d(kwargs['dropout_prob'])
+    )
+
+    # Optional batch normalization layer
+    try:
+        if layer['batch_norm']:
+            kwargs['module'].add_module(
+                f"batch_norm_{kwargs['i']}",
+                nn.BatchNorm1d(kwargs['dims'][-1])
+            )
+    except KeyError:
+        pass
+
+    kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
+
+    # Data size halves
+    kwargs['data_size'] = int(kwargs['data_size'] / 2)
 
     return kwargs
 

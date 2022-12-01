@@ -2,9 +2,10 @@
 **/*.arf
 **/*.rmf
 **/*.jsgrp
-**/*test*
-**/*temp*
+**/*[Tt][Ee][Ss][Tt]*
+**/*[Tt][Ee][Mm][Pp]*
 /.idea
+/.vscode
 /data/
 /plots/
 /model_states/
