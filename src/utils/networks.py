@@ -95,7 +95,7 @@ class Network(nn.Module):
             if layer['type'] == 'concatenate':
                 x = torch.cat((x, outputs[layer['layer']]), dim=1)
             # Shortcut layers
-            if layer['type'] == 'shortcut':
+            elif layer['type'] == 'shortcut':
                 x = x + outputs[layer['layer']]
             # All other layers
             else:

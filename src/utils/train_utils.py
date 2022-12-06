@@ -104,6 +104,7 @@ def encoder_test(
     cnn.eval()
 
     # Initialize multiprocessing variables
+    spectra_count = 0
     loader_output = next(enumerate(loader))[1]
     outputs = torch.empty((0, loader_output[1].size(1))).to(device)
     initial_time = time()
@@ -111,6 +112,7 @@ def encoder_test(
     with torch.no_grad():
         for spectra, _, _ in loader:
             spectra = spectra.to(device)
+            spectra_count += spectra.size(0)
 
             # Generate parameter predictions
             output = cnn(spectra)
@@ -118,7 +120,9 @@ def encoder_test(
 
     # Transform outputs from normalized to real values
     outputs = outputs.cpu().numpy()
-    print(f'\nParameter prediction time: {time() - initial_time:.3f} s')
+    final_time = time() - initial_time
+    print(f'\nParameter prediction time: {final_time:.3f} s'
+          f'\tSpectra per second: {spectra_count / final_time:.2e}')
 
     loss = xspec_loss(log_params, loader, model, params=outputs)
 
@@ -209,9 +213,6 @@ def train(
     if surrogate:
         surrogate.train()
 
-    # for param in surrogate.parameters():
-    #     param.requires_grad = False
-
     for spectra, params, _ in loader:
         spectra = spectra.to(device)
 
@@ -298,11 +299,12 @@ def train_val(
         if save_num:
             state = {
                 'epoch': epoch,
+                'train_loss': losses[0],
+                'val_loss': losses[1],
+                'indices': loaders[0].dataset.dataset.indices,
                 'state_dict': cnn.state_dict(),
                 'optimizer': cnn.optimizer.state_dict(),
                 'scheduler': cnn.scheduler.state_dict(),
-                'train_loss': losses[0],
-                'val_loss': losses[1],
             }
 
             torch.save(state, f'{states_dir}{cnn.name}_{save_num}.pth')

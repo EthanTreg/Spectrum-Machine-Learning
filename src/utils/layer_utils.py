@@ -241,7 +241,7 @@ def convolutional(kwargs: dict, layer: dict) -> dict:
     return kwargs
 
 
-def gru(kwargs: dict, _) -> dict:
+def gru(kwargs: dict, layer: dict) -> dict:
     """
     Gated recurrent unit (GRU) layer constructor
 
@@ -250,19 +250,35 @@ def gru(kwargs: dict, _) -> dict:
     kwargs : dictionary
         Must contain layer number (i), data size (data_size),
         sequential module (module)
-    _ : dictionary
-        For compatibility
+    layer : dictionary
+        Can contain the number of layers (layers), else 2 is used
 
     Returns
     -------
     dictionary
         Returns the input kwargs with any changes made by the function
     """
+    try:
+        layers = layer['layers']
+    except KeyError:
+        layers = 2
+
+    try:
+        factor = layer['factor']
+    except KeyError:
+        factor = 1
+
+    if layers > 1:
+        dropout_prob = kwargs['dropout_prob']
+    else:
+        dropout_prob = 0
+
     gru_layer = nn.GRU(
         input_size=kwargs['data_size'],
-        hidden_size=kwargs['data_size'],
-        num_layers=2,
+        hidden_size=kwargs['data_size'] * factor,
+        num_layers=layers,
         batch_first=True,
+        dropout=dropout_prob,
     )
 
     kwargs['module'].add_module(f"GRU_{kwargs['i']}", gru_layer)
@@ -271,6 +287,9 @@ def gru(kwargs: dict, _) -> dict:
         GRUOutput(False)
     )
     kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
+
+    # Data size doubles
+    kwargs['data_size'] *= factor
 
     return kwargs
 
@@ -318,7 +337,7 @@ def conv_upscale(kwargs: dict, layer: dict) -> dict:
     layer : dictionary
         Must contain number of filters (filters).
         Can contain batch normalisation (batch_norm) else it isn't used
-        and/or activation layer (activation) else it isn't used
+        and/or activation layer (activation) else ELU is used
 
     Returns
     -------
@@ -350,7 +369,7 @@ def conv_upscale(kwargs: dict, layer: dict) -> dict:
         if layer['activation']:
             kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
     except KeyError:
-        pass
+        kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
 
     # Upscaling done using pixel shuffling
     kwargs['module'].add_module(f"pixel_shuffle_{kwargs['i']}", PixelShuffle1d(2))

@@ -86,23 +86,7 @@ def load_network(
         The initial epoch, the updated network, optimizer
         and scheduler, and the training and validation losses
     """
-    try:
-        d_state = torch.load(f'{states_dir}{cnn.name}_{load_num}.pth')
-    except FileNotFoundError:
-        print(f'ERROR: {states_dir}{cnn.name}_{load_num}.pth does not exist')
-        return None
-
-    # Updates some saved states with the new network for compatibility
-    d_state['optimizer']['param_groups'][0]['params'] = \
-        cnn.optimizer.state_dict()['param_groups'][0]['params']
-    d_state['scheduler']['best'] = cnn.scheduler.state_dict()['best']
-    old_keys = d_state['state_dict'].copy().keys()
-
-    # Remove layers not present in the new network
-    for i, key in enumerate(old_keys):
-        if key not in cnn.state_dict().keys():
-            del d_state['state_dict'][key]
-            del d_state['optimizer']['state'][i]
+    d_state = torch.load(f'{states_dir}{cnn.name}_{load_num}.pth')
 
     # Apply the saved states to the new network
     initial_epoch = d_state['epoch']

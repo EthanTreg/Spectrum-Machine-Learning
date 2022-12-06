@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from torch import nn, Tensor
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, Subset
 
 
 class SpectrumDataset(Dataset):
@@ -18,6 +18,8 @@ class SpectrumDataset(Dataset):
         Min and max spectral range and mean & standard deviation of parameters
     names : ndarray
         Names of each spectrum
+    indices : ndarray, default = None
+        Data indices for random training & validation datasets
 
     Methods
     -------
@@ -44,6 +46,7 @@ class SpectrumDataset(Dataset):
             used for transformation after log
         """
         self.transform = transform
+        self.indices = None
         spectra = np.load(data_file)
 
         # Set negative values equal to minimum real value
@@ -140,7 +143,8 @@ def data_initialisation(
         log_params: list,
         kwargs: dict,
         val_frac: float = 0.1,
-        transform: list[list[np.ndarray]] = None) -> tuple[DataLoader, DataLoader]:
+        transform: list[list[np.ndarray]] = None,
+        indices: np.ndarray = None) -> tuple[DataLoader, DataLoader]:
     """
     Initialises training and validation data
 
@@ -158,6 +162,8 @@ def data_initialisation(
         Fraction of validation data
     transform : list[ndarray], default = None
         Min and max spectral range and mean & standard deviation of parameters
+    indices : ndarray, default = None
+        Data indices for random training & validation datasets
 
     Returns
     -------
@@ -168,7 +174,12 @@ def data_initialisation(
     dataset = SpectrumDataset(spectra_path, labels_path, log_params, transform=transform)
     val_amount = int(len(dataset) * val_frac)
 
-    train_dataset, val_dataset = random_split(dataset, [len(dataset) - val_amount, val_amount])
+    if indices is None or indices.size != len(dataset):
+        indices = np.random.choice(len(dataset), len(dataset), replace=False)
+        dataset.indices = indices
+
+    train_dataset = Subset(dataset, indices[:-val_amount])
+    val_dataset = Subset(dataset, indices[-val_amount:])
 
     # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, **kwargs)

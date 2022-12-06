@@ -13,27 +13,35 @@
         },
         {
             "type": "linear",
-            "factor": 0.125
+            "factor": 0.25
         },
         {
             "type": "reshape",
             "output": [1, -1]
         },
         {
-            "type": "conv_transpose",
-            "filters": 64
+            "type": "convolutional",
+            "filters": 32
         },
         {
             "type": "conv_transpose",
-            "filters": 64
+            "filters": 16,
+            "batch_norm": 1
+        },
+        {
+            "type": "convolutional",
+            "filters": 32,
+            "batch_norm": 1
         },
         {
             "type": "conv_upscale",
-            "filters": 2,
-            "activation": 1
+            "filters": 8
         },
         {
             "type": "gru"
+        },
+        {
+            "type": "conv_depth_downscale"
         },
         {
             "type": "reshape",

@@ -137,6 +137,16 @@ def initialization(
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
 
+    if load_num:
+        try:
+            indices = torch.load(f'{states_dir}{name}_{load_num}.pth')['indices']
+        except FileNotFoundError:
+            print(f'ERROR: {states_dir}{name}_{load_num}.pth does not exist')
+            load_num = 0
+            indices = None
+    else:
+        indices = None
+
     # Initialize datasets
     loaders = data_initialisation(
         spectra_path,
@@ -144,6 +154,7 @@ def initialization(
         log_params,
         kwargs,
         transform=transform,
+        indices=indices,
     )
 
     # Initialize network
@@ -171,9 +182,9 @@ def main():
     Main function for spectrum machine learning
     """
     # Variables
-    e_load_num = 0
-    e_save_num = 1
-    d_load_num = 1
+    e_load_num = 1
+    e_save_num = 2
+    d_load_num = 5
     d_save_num = 0
     num_epochs = 200
     learning_rate = 2e-4
