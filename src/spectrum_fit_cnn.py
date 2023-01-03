@@ -1,86 +1,17 @@
 import os
+from time import time
 
 import torch
 import numpy as np
 import matplotlib
-import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from src.utils.networks import Network
 from src.utils.network_utils import load_network
 from src.utils.data_utils import data_initialisation
+from src.utils.plot_utils import plot_initialization
+from src.utils.utils import PyXspecFitting, calculate_saliency
 from src.utils.train_utils import train_val, encoder_test, xspec_loss
-from src.utils.utils import PyXspecFitting, plot_loss, plot_reconstructions
-
-
-def plot_initialization(
-    prefix: str,
-    plots_dir: str,
-    losses: tuple[list, list],
-    spectra: np.ndarray,
-    outputs: np.ndarray
-):
-    """
-    Initializes & plots reconstruction & loss plots
-
-    Parameters
-    ----------
-    prefix : string
-        Name prefix for plots
-    plots_dir : string
-        Directory to save plots
-    losses : tuple[list, list]
-        Training & validation losses
-    spectra : ndarray
-        Original spectra
-    outputs : ndarray
-        Reconstructions
-    """
-    text_color = '#d9d9d9'
-    matplotlib.rcParams.update({
-        'text.color': text_color,
-        'xtick.color': text_color,
-        'ytick.color': text_color,
-        'axes.labelcolor': text_color,
-        'axes.edgecolor': text_color,
-        'axes.facecolor': (0, 0, 1, 0),
-    })
-
-    # Initialize reconstructions plots
-    _, axes = plt.subplots(4, 4, figsize=(24, 12), sharex='col', gridspec_kw={'hspace': 0})
-    axes = axes.flatten()
-
-    # Plot reconstructions
-    for i in range(axes.size):
-        plot_reconstructions(spectra[i], outputs[i], axes[i])
-
-    plt.figtext(0.5, 0.02, 'Energy (keV)', ha='center', va='center', fontsize=16)
-    plt.figtext(
-        0.02,
-        0.5,
-        'Scaled Log Counts',
-        ha='center',
-        va='center',
-        rotation='vertical',
-        fontsize=16,
-    )
-
-    legend = plt.figlegend(
-        *axes[0].get_legend_handles_labels(),
-        loc='lower center',
-        ncol=2,
-        bbox_to_anchor=(0.5, 0.95),
-        fontsize=16,
-        columnspacing=10,
-    )
-    legend.get_frame().set_alpha(None)
-
-    plt.tight_layout(rect=[0.02, 0.02, 1, 0.96])
-    plt.savefig(f'{plots_dir}{prefix} Reconstructions.png', transparent=True)
-
-    # Plot loss over epochs
-    plot_loss(losses[0], losses[1])
-    plt.savefig(f'{plots_dir}{prefix} Loss.png', transparent=True)
 
 
 def initialization(
@@ -126,8 +57,8 @@ def initialization(
 
     Returns
     -------
-    tuple[int, tuple[list, list], tuple[DataLoader, DataLoader], Network]
-        Initial epoch; train & validation losses; train & validation dataloaders; & network
+    tuple[integer, tuple[list, list], tuple[DataLoader, DataLoader], Network, device]
+        Initial epoch; train & validation losses; train & validation dataloaders; network; & device
     """
     # Constants
     initial_epoch = 0
@@ -182,8 +113,8 @@ def main():
     Main function for spectrum machine learning
     """
     # Variables
-    e_load_num = 1
-    e_save_num = 2
+    e_load_num = 2
+    e_save_num = 0
     d_load_num = 5
     d_save_num = 0
     num_epochs = 200
@@ -196,11 +127,24 @@ def main():
     data_dir = '../../../Documents/Nicer_Data/spectra/'
     log_params = [0, 2, 3, 4]
     fix_params = np.array([[4, 0], [5, 100]])
+    torch.manual_seed(11)
 
     # Constants
     states_dir = '../model_states/'
     plots_dir = '../plots/'
     root_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Initialize Matplotlib display parameters
+    text_color = '#d9d9d9'
+    # text_color = '#555555'
+    matplotlib.rcParams.update({
+        'text.color': text_color,
+        'xtick.color': text_color,
+        'ytick.color': text_color,
+        'axes.labelcolor': text_color,
+        'axes.edgecolor': text_color,
+        'axes.facecolor': (0, 0, 1, 0),
+    })
 
     # Initialize PyXspec model
     model = PyXspecFitting('tbabs(simplcutx(ezdiskbb))', [root_dir, data_dir], fix_params)
@@ -269,6 +213,9 @@ def main():
 
     plot_initialization('Encoder-Decoder', plots_dir, losses, spectra, outputs)
 
+    calculate_saliency(plots_dir, (d_loaders[1], e_loaders[1]), device, encoder, decoder)
+
+    # Encoder performance
     loss = encoder_test(
         log_params,
         device,
@@ -278,6 +225,20 @@ def main():
     )
     print(f'\nFinal PGStat Loss: {loss:.3e}')
 
+    # Encoder + Xspec performance
+    initial_time = time()
+    model.optimize = True
+    loss = encoder_test(
+        log_params,
+        device,
+        e_loaders[1],
+        encoder,
+        model,
+    )
+    print(f'\nFinal PGStat Loss with Fitting: {loss:.3e}\tTime: {time() - initial_time}')
+
+    # Xspec performance
+    model.optimize = False
     loss = xspec_loss(log_params, e_loaders[1], model)
     print(f'\nXspec Fitting Loss: {loss:.3e}')
 

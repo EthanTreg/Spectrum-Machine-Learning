@@ -37,7 +37,7 @@ def xspec_loss(
     """
     # Initialize variables
     processes = []
-    batch = len(next(enumerate(loader))[1][2])
+    batch = len(next(iter(loader))[2])
     param_transform = loader.dataset.dataset.transform[1]
     counter = Value('i', 0)
     queue = Queue()
@@ -105,7 +105,7 @@ def encoder_test(
 
     # Initialize multiprocessing variables
     spectra_count = 0
-    loader_output = next(enumerate(loader))[1]
+    loader_output = next(iter(loader))
     outputs = torch.empty((0, loader_output[1].size(1))).to(device)
     initial_time = time()
 

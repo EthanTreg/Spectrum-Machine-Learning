@@ -137,6 +137,34 @@ class SpectrumDataset(Dataset):
         self.spectra = self.spectra.squeeze(dim=1)
 
 
+def load_x_data(y_size: int) -> np.ndarray:
+    """
+    Fetches x data from file and matches the length to the y data
+
+    Parameters
+    ----------
+    y_size : int
+        Number of y data points
+
+    Returns
+    -------
+    ndarray
+        x data points
+    """
+    x_data = np.load('../data/spectra_x_axis.npy')
+
+    # Make sure x data size is even
+    if x_data.size % 2 != 0:
+        x_data = np.append(x_data[:-2], np.mean(x_data[-2:]))
+
+    # Make sure x data size is of the same size as y data
+    if x_data.size != y_size and x_data.size % y_size == 0:
+        x_data = x_data.reshape(int(x_data.size / y_size), - 1)
+        x_data = np.mean(x_data, axis=0)
+
+    return x_data
+
+
 def data_initialisation(
         spectra_path: str,
         labels_path: str,
@@ -174,6 +202,7 @@ def data_initialisation(
     dataset = SpectrumDataset(spectra_path, labels_path, log_params, transform=transform)
     val_amount = int(len(dataset) * val_frac)
 
+    # If network hasn't trained on data yet, randomly separate training and validation
     if indices is None or indices.size != len(dataset):
         indices = np.random.choice(len(dataset), len(dataset), replace=False)
         dataset.indices = indices
@@ -182,8 +211,8 @@ def data_initialisation(
     val_dataset = Subset(dataset, indices[-val_amount:])
 
     # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, **kwargs)
-    val_loader = DataLoader(val_dataset, batch_size=256, shuffle=True, **kwargs)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, **kwargs)
+    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=True, **kwargs)
 
     print(f'Training data size: {len(train_dataset)}\tValidation data size: {len(val_dataset)}\n')
 

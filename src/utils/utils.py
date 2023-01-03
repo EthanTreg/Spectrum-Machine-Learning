@@ -1,10 +1,18 @@
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING
 from multiprocessing import Queue, Value
 
 import xspec
+import torch
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.axes import Axes
+from torch.utils.data import DataLoader
+
+from src.utils.plot_utils import plot_saliency
+
+if TYPE_CHECKING:
+    from src.utils.networks import Network
 
 
 class PyXspecFitting:
@@ -13,6 +21,8 @@ class PyXspecFitting:
 
     Attributes
     ----------
+    optimize : bool
+        Whether to optimize the fit
     model : string
         Model to use for PyXspec
     dirs : list[string]
@@ -43,6 +53,7 @@ class PyXspecFitting:
             Parameter number (starting from 1) & value of fixed parameters
         """
         super().__init__()
+        self.optimize = False
         self.dirs = dirs
         self.fix_params = fix_params
         self.param_limits = np.empty((0, 2))
@@ -55,12 +66,15 @@ class PyXspecFitting:
         self.model = xspec.Model(model)
         xspec.AllModels.setEnergies('0.002 500 1000 log')
         xspec.Fit.statMethod = 'pgstat'
+        xspec.Fit.query = 'no'
 
         # Generate parameter limits
         for j in range(self.model.nParameters):
             j += 1
 
-            if j not in fix_params[:, 0]:
+            if j in fix_params[:, 0]:
+                self.model(j).frozen = True
+            else:
                 limits = np.array(self.model(j).values)[[2, 5]]
                 self.param_limits = np.vstack((self.param_limits, limits))
 
@@ -81,6 +95,13 @@ class PyXspecFitting:
 
         # Update model parameters
         self.model.setPars(params.tolist())
+
+        # If optimization is enabled, then try unless there is an error
+        if self.optimize:
+            try:
+                xspec.Fit.perform()
+            except Exception:
+                self.model.setPars(params.tolist())
 
         # Calculate fit statistic loss
         return xspec.Fit.statistic
@@ -109,7 +130,7 @@ class PyXspecFitting:
         queue : Queue
             Multiprocessing queue to add PGStat loss
         """
-        loss = 0
+        losses = []
         os.chdir(self.dirs[1])
 
         # Limit parameters
@@ -123,10 +144,10 @@ class PyXspecFitting:
 
             # Load spectrum
             xspec.Spectrum(name)
-            xspec.AllData.ignore('0-0.3 10-**')
+            xspec.AllData.ignore('0-0.3 10.0-**')
 
             # Calculate fit statistic
-            loss += self.fit_statistic(params[i])
+            losses.append(self.fit_statistic(params[i]))
 
             xspec.AllData.clear()
 
@@ -137,7 +158,7 @@ class PyXspecFitting:
             progress_bar(counter.value, total)
 
         # Average loss of batch
-        queue.put(loss / len(names))
+        queue.put(sum(losses) / len(names))
 
         os.chdir(self.dirs[0])
 
@@ -167,58 +188,67 @@ def progress_bar(i: int, total: int, text: str = ''):
         print()
 
 
-def plot_reconstructions(y_data: np.ndarray, y_recon: np.ndarray, axes: Axes):
+def calculate_saliency(
+        plots_dir: str,
+        loaders: tuple[DataLoader, DataLoader],
+        device: torch.device,
+        encoder: Network,
+        decoder: Network):
     """
-    Plots reconstructions for a given epoch
+    Generates saliency values for autoencoder & decoder
+    Prints stats on decoder parameter significance
 
     Parameters
     ----------
-    y_data : ndarray
-        Spectrum
-    y_recon : ndarray
-        Reconstructed Spectrum
-    axes : Axes
-        Plot axes
+    plots_dir : string
+        Directory to save plots
+    loaders : tuple[DataLoader, DataLoader]
+        Autoencoder & decoder validation dataloaders
+    device : device
+        Which device type PyTorch should use
+    encoder : Network
+        Encoder half of the network
+    decoder : Network
+        Decoder half of the network
     """
-    x_data = np.load('../data/spectra_x_axis.npy')
+    # Constants
+    d_spectra, d_parameters, _ = next(iter(loaders[0]))
+    e_spectra = next(iter(loaders[1]))[0][:8].to(device)
 
-    # Make sure x data size is even
-    if x_data.size % 2 != 0:
-        x_data = np.append(x_data[:-2], np.mean(x_data[-2:]))
+    # Network initialization
+    decoder.train()
+    encoder.train()
+    d_spectra = d_spectra.to(device)
+    d_parameters = d_parameters.to(device)
+    d_parameters.requires_grad_()
+    e_spectra.requires_grad_()
 
-    # Make sure x data size is of the same size as y data
-    if x_data.size != y_data.size and x_data.size % y_data.size == 0:
-        x_data = x_data.reshape(int(x_data.size / y_data.size), - 1)
-        x_data = np.mean(x_data, axis=0)
+    # Generate predictions
+    d_output = decoder(d_parameters)
+    e_output = decoder(encoder(e_spectra))
 
-    axes.scatter(x_data, y_data, label='Spectrum')
-    axes.scatter(x_data, y_recon, label='Reconstruction')
-    axes.locator_params(axis='y', nbins=5)
+    # Perform backpropagation
+    d_loss = torch.nn.MSELoss()(d_output, d_spectra)
+    e_loss = torch.nn.MSELoss()(e_output, e_spectra)
+    d_loss.backward()
+    e_loss.backward()
 
+    # Calculate saliency
+    d_saliency = d_parameters.grad.data.abs().cpu()
+    e_saliency = e_spectra.grad.data.abs().cpu()
 
-def plot_loss(train_loss: list, val_loss: list):
-    """
-    Plots training and validation loss as a function of epochs
+    # Measure impact of input parameters on decoder output
+    parameter_saliency = torch.mean(d_saliency, dim=0)
+    parameter_impact = parameter_saliency / torch.min(parameter_saliency)
+    parameter_std = torch.std(d_saliency, dim=0) / torch.min(parameter_saliency)
 
-    Parameters
-    ----------
-    train_loss : list
-        Training losses
-    val_loss : list
-        Validation losses
-    """
-    plt.figure(figsize=(16, 9), constrained_layout=True)
-    plt.plot(train_loss, label='Training Loss')
-    plt.plot(val_loss, label='Validation Loss')
-    plt.xlabel('Epoch', fontsize=18)
-    plt.ylabel('Loss', fontsize=18)
-    plt.yscale('log')
-    plt.text(
-        0.8, 0.75,
-        f'Final loss: {val_loss[-1]:.3e}',
-        fontsize=16,
-        transform=plt.gca().transAxes
+    print(
+        f'\nParameter impact on decoder:\n{parameter_impact.tolist()}'
+        f'\nParameter spread:\n{parameter_std.tolist()}\n'
     )
 
-    legend = plt.legend(fontsize=20)
-    legend.get_frame().set_alpha(None)
+    e_spectra = e_spectra.cpu().detach()
+    e_output = e_output.cpu().detach()
+    e_saliency = e_saliency.cpu()
+
+    plot_saliency(plots_dir, e_spectra, e_output, e_saliency)
