@@ -1,5 +1,4 @@
 import os
-from time import time
 
 import torch
 import numpy as np
@@ -9,9 +8,74 @@ from torch.utils.data import DataLoader
 from src.utils.networks import Network
 from src.utils.network_utils import load_network
 from src.utils.data_utils import data_initialisation
-from src.utils.plot_utils import plot_initialization
-from src.utils.utils import PyXspecFitting, calculate_saliency
-from src.utils.train_utils import train_val, encoder_test, xspec_loss
+from src.utils.plot_utils import plot_initialization, plot_saliency
+from src.utils.train_utils import training, encoder_test
+
+
+def calculate_saliency(
+        plots_dir: str,
+        loaders: tuple[DataLoader, DataLoader],
+        device: torch.device,
+        encoder: Network,
+        decoder: Network):
+    """
+    Generates saliency values for autoencoder & decoder
+    Prints stats on decoder parameter significance
+
+    Parameters
+    ----------
+    plots_dir : string
+        Directory to save plots
+    loaders : tuple[DataLoader, DataLoader]
+        Autoencoder & decoder validation dataloaders
+    device : device
+        Which device type PyTorch should use
+    encoder : Network
+        Encoder half of the network
+    decoder : Network
+        Decoder half of the network
+    """
+    # Constants
+    d_spectra, d_parameters, *_ = next(iter(loaders[0]))
+    e_spectra = next(iter(loaders[1]))[0][:8].to(device)
+
+    # Network initialization
+    decoder.train()
+    encoder.train()
+    d_spectra = d_spectra.to(device)
+    d_parameters = d_parameters.to(device)
+    d_parameters.requires_grad_()
+    e_spectra.requires_grad_()
+
+    # Generate predictions
+    d_output = decoder(d_parameters)
+    e_output = decoder(encoder(e_spectra))
+
+    # Perform backpropagation
+    d_loss = torch.nn.MSELoss()(d_output, d_spectra)
+    e_loss = torch.nn.MSELoss()(e_output, e_spectra)
+    d_loss.backward()
+    e_loss.backward()
+
+    # Calculate saliency
+    d_saliency = d_parameters.grad.data.abs().cpu()
+    e_saliency = e_spectra.grad.data.abs().cpu()
+
+    # Measure impact of input parameters on decoder output
+    parameter_saliency = torch.mean(d_saliency, dim=0)
+    parameter_impact = parameter_saliency / torch.min(parameter_saliency)
+    parameter_std = torch.std(d_saliency, dim=0) / torch.min(parameter_saliency)
+
+    print(
+        f'\nParameter impact on decoder:\n{parameter_impact.tolist()}'
+        f'\nParameter spread:\n{parameter_std.tolist()}\n'
+    )
+
+    e_spectra = e_spectra.cpu().detach()
+    e_output = e_output.cpu().detach()
+    e_saliency = e_saliency.cpu()
+
+    plot_saliency(plots_dir, e_spectra, e_output, e_saliency)
 
 
 def initialization(
@@ -113,30 +177,36 @@ def main():
     Main function for spectrum machine learning
     """
     # Variables
-    e_load_num = 2
-    e_save_num = 0
-    d_load_num = 5
-    d_save_num = 0
-    num_epochs = 200
+    e_load_num = 8
+    d_load_num = 11
+    e_save_num = 8
+    d_save_num = 11
+    num_epochs = 100
     learning_rate = 2e-4
     config_dir = '../network_configs/'
     synth_path = '../data/synth_spectra.npy'
     synth_params_path = '../data/synth_spectra_params.npy'
     spectra_path = '../data/preprocessed_spectra.npy'
     params_path = '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
-    data_dir = '../../../Documents/Nicer_Data/spectra/'
     log_params = [0, 2, 3, 4]
-    fix_params = np.array([[4, 0], [5, 100]])
-    torch.manual_seed(11)
+    worker_data = {
+        'optimize': False,
+        'dirs': [
+            os.path.dirname(os.path.abspath(__file__)),
+            '../../../Documents/Nicer_Data/spectra/',
+        ],
+        'fix_params': np.array([[4, 0], [5, 100]]),
+        'model': 'tbabs(simplcutx(ezdiskbb))',
+    }
 
     # Constants
     states_dir = '../model_states/'
     plots_dir = '../plots/'
-    root_dir = os.path.dirname(os.path.abspath(__file__))
+    worker_dir = '../data/worker/'
 
     # Initialize Matplotlib display parameters
-    text_color = '#d9d9d9'
-    # text_color = '#555555'
+    # text_color = '#d9d9d9'
+    text_color = '#222222'
     matplotlib.rcParams.update({
         'text.color': text_color,
         'xtick.color': text_color,
@@ -146,9 +216,6 @@ def main():
         'axes.facecolor': (0, 0, 1, 0),
     })
 
-    # Initialize PyXspec model
-    model = PyXspecFitting('tbabs(simplcutx(ezdiskbb))', [root_dir, data_dir], fix_params)
-
     # Create folder to save network progress
     if not os.path.exists(states_dir):
         os.makedirs(states_dir)
@@ -156,6 +223,13 @@ def main():
     # Create plots directory
     if not os.path.exists(plots_dir):
         os.makedirs(plots_dir)
+
+    # Create worker directory
+    if not os.path.exists(worker_dir):
+        os.makedirs(worker_dir)
+
+    # Save worker variables
+    np.save(f'{worker_dir}worker_data.npy', worker_data)
 
     # Initialize data & decoder
     d_initial_epoch, d_losses, d_loaders, decoder, device = initialization(
@@ -185,29 +259,27 @@ def main():
     )
 
     # Train decoder
-    losses, spectra, outputs = train_val(
-        num_epochs,
+    losses, spectra, outputs = training(
+        (d_initial_epoch, num_epochs),
         d_losses,
         d_loaders,
         decoder,
         device,
-        d_initial_epoch,
-        d_save_num,
-        states_dir,
+        save_num=d_save_num,
+        states_dir=states_dir,
     )
 
     plot_initialization('Decoder', plots_dir, losses, spectra, outputs)
 
     # Train encoder
-    losses, spectra, outputs = train_val(
-        num_epochs,
+    losses, spectra, outputs = training(
+        (e_initial_epoch, num_epochs),
         e_losses,
         e_loaders,
         encoder,
         device,
-        e_initial_epoch,
-        e_save_num,
-        states_dir,
+        save_num=e_save_num,
+        states_dir=states_dir,
         surrogate=decoder,
     )
 
@@ -215,32 +287,57 @@ def main():
 
     calculate_saliency(plots_dir, (d_loaders[1], e_loaders[1]), device, encoder, decoder)
 
-    # Encoder performance
+    # Encoder validation performance
+    print('\nTesting Encoder...')
     loss = encoder_test(
+        worker_dir,
         log_params,
-        device,
         e_loaders[1],
-        encoder,
-        model,
+        job_name='Encoder_output',
+        device=device,
+        encoder=encoder,
     )
-    print(f'\nFinal PGStat Loss: {loss:.3e}')
-
-    # Encoder + Xspec performance
-    initial_time = time()
-    model.optimize = True
-    loss = encoder_test(
-        log_params,
-        device,
-        e_loaders[1],
-        encoder,
-        model,
-    )
-    print(f'\nFinal PGStat Loss with Fitting: {loss:.3e}\tTime: {time() - initial_time}')
+    print(f'PGStat Loss: {loss:.3e}')
 
     # Xspec performance
-    model.optimize = False
-    loss = xspec_loss(log_params, e_loaders[1], model)
-    print(f'\nXspec Fitting Loss: {loss:.3e}')
+    print('\nTesting Xspec...')
+    loss = encoder_test(worker_dir, log_params, e_loaders[1], job_name='Xspec_output')
+    print(f'PGStat Loss: {loss:.3e}')
+
+    # Default performance
+    print('\nTesting Defaults...')
+    loss = encoder_test(
+        worker_dir,
+        log_params,
+        e_loaders[1],
+        defaults=torch.tensor([1, 2.5, 0.02, 1, 1])
+    )
+    print(f'PGStat Loss: {loss:.3e}')
+
+    # Allow Xspec optimization
+    worker_data['optimize'] = True
+    np.save(f'{worker_dir}worker_data.npy', worker_data)
+
+    # Encoder + Xspec performance
+    print('\nTesting Encoder + Fitting...')
+    loss = encoder_test(
+        worker_dir,
+        log_params,
+        e_loaders[1],
+        job_name='Encoder_Xspec_output',
+        device=device,
+        encoder=encoder,
+    )
+    print(f'PGStat Loss: {loss:.3e}')
+
+    print('\nTesting Defaults + Fitting...')
+    loss = encoder_test(
+        worker_dir,
+        log_params,
+        e_loaders[1],
+        defaults=torch.tensor([1, 2.5, 0.02, 1, 1])
+    )
+    print(f'PGStat Loss: {loss:.3e}')
 
 
 if __name__ == '__main__':

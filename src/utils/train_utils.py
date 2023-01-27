@@ -1,5 +1,6 @@
+import os
+import subprocess
 from time import time
-from multiprocessing import Process, Queue, Value
 
 import torch
 import numpy as np
@@ -7,28 +8,107 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from src.utils.networks import Network
-from src.utils.utils import PyXspecFitting
 
 
 def xspec_loss(
-        log_params: list[int],
-        loader: DataLoader,
-        model: PyXspecFitting,
-        params: np.ndarray = None) -> float:
+        worker_dir: str,
+        names: list[str],
+        params: torch.Tensor,
+        job_name: str = None) -> float:
     """
     Calculates the PGStat loss using PyXspec
+    Done using multiprocessing if >2 cores available
 
     Parameters
     ----------
+    worker_dir : string
+        Directory to where to save worker data
+    names : list[string]
+        Spectra names
+    params : Tensor
+        Parameter predictions from CNN
+    job_name : string, default = None
+        If not None, file name to save the output to
+
+    Returns
+    -------
+    float
+        Average loss
+    """
+    # Initialize variables
+    cpus = os.cpu_count()
+    initial_time = time()
+    data = []
+
+    # If <2 CPU cores available, perform single threading, otherwise use multiple cores
+    if cpus == 1:
+        subprocess.run(['python3', './utils/pyxspec_child.py', worker_dir], check=True)
+    else:
+        # Divide work between workers
+        worker_names = np.array_split(names, cpus)
+        worker_params = torch.tensor_split(params, cpus)
+
+        # Save data to file for each worker
+        for i, (names_batch, params_batch) in enumerate(zip(worker_names, worker_params)):
+            job = np.hstack((np.expand_dims(names_batch, axis=1), params_batch.numpy()))
+            np.savetxt(f'{worker_dir}worker_{i}_job.csv', job, delimiter=',', fmt='%s')
+
+        # Start workers
+        print(f'Starting {cpus} workers...')
+        subprocess.run([
+            'mpiexec',
+            '-n',
+            str(cpus),
+            '--use-hwthread-cpus',
+            'python3',
+            './utils/pyxspec_child.py',
+            os.getcwd(),
+            worker_dir,
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        print(f'Workers finished\tTime: {time() - initial_time:.3e} s')
+
+    # Retrieve worker outputs
+    for i in range(cpus):
+        data.append(np.loadtxt(f'{worker_dir}worker_{i}_job.csv', delimiter=',', dtype=str))
+
+    data = np.concatenate(data)
+
+    # If job_name is provided, save all worker data to file
+    if job_name:
+        np.savetxt(f'{worker_dir}{job_name}.csv', data, delimiter=',', fmt='%s')
+
+    # Median loss
+    return float(np.median(data[:, -1].astype(float)))
+
+
+def encoder_test(
+        worker_dir: str,
+        log_params: list[int],
+        loader: DataLoader,
+        job_name: str = None,
+        defaults: torch.Tensor = None,
+        device: torch.device = None,
+        encoder: Network = None) -> float:
+    """
+    If encoder is provided, creates predictions for each spectra, otherwise, uses true parameters
+    then calculates loss
+
+    Parameters
+    ----------
+    worker_dir : string
+        Directory to where to save worker data
     log_params : list[integer]
         Indices of parameters in logarithmic space
     loader : DataLoader
         PyTorch DataLoader that contains data to train
-    model : PyXspecFitting
-        PyXspec model for fit evaluation
-    params : ndarray, default = None
-        Parameters to measure performance using Xspec,
-        if None, parameters from dataloader will be used
+    job_name : string, default = None
+        If not None, file name to save the output to
+    defaults : Tensor, default = None
+        If default parameters should be used
+    device : device, default = None
+        Which device type PyTorch should use, not needed if encoder is None
+    encoder : Network, default = None
+        Encoder to predict parameters, if None, true parameters will be used
 
     Returns
     -------
@@ -36,158 +116,47 @@ def xspec_loss(
         Average loss value
     """
     # Initialize variables
-    processes = []
-    batch = len(next(iter(loader))[2])
+    initial_time = time()
+    names = []
+    params = []
     param_transform = loader.dataset.dataset.transform[1]
-    counter = Value('i', 0)
-    queue = Queue()
+
+
+    if encoder:
+        encoder.eval()
 
     # Initialize processes for multiprocessing of encoder loss calculation
-    for i, data in enumerate(loader):
-        if params is None:
-            param_batch = data[1]
-        else:
-            param_batch = params[batch * i:batch * (i + 1)]
-
-        param_batch = param_batch * param_transform[1] + param_transform[0]
-        param_batch[:, log_params] = 10 ** param_batch[:, log_params]
-
-        processes.append(Process(target=model.fit_loss, args=(
-            len(loader.dataset),
-            data[2],
-            param_batch,
-            counter,
-            queue,
-        )))
-
-    # Start multiprocessing
-    for process in processes:
-        process.start()
-
-    # End multiprocessing
-    for process in processes:
-        process.join()
-
-    # Collect results
-    losses = [queue.get() for _ in processes]
-
-    return sum(losses) / len(losses)
-
-
-def encoder_test(
-        log_params: list[int],
-        device: torch.device,
-        loader: DataLoader,
-        cnn: Network,
-        model: PyXspecFitting) -> float:
-    """
-    Tests the encoder using PyXspec
-
-    Parameters
-    ----------
-    log_params : list[integer]
-        Indices of parameters in logarithmic space
-    device : device
-        Which device type PyTorch should use
-    loader : DataLoader
-        PyTorch DataLoader that contains data to train
-    cnn : Network
-        Model to use for training
-    model : PyXspecFitting
-        PyXspec model for fit evaluation
-
-    Returns
-    -------
-    float
-        Average loss value
-    """
-    cnn.eval()
-
-    # Initialize multiprocessing variables
-    spectra_count = 0
-    loader_output = next(iter(loader))
-    outputs = torch.empty((0, loader_output[1].size(1))).to(device)
-    initial_time = time()
-
     with torch.no_grad():
-        for spectra, _, _ in loader:
-            spectra = spectra.to(device)
-            spectra_count += spectra.size(0)
+        for data in loader:
+            names.extend(data[-1])
 
-            # Generate parameter predictions
-            output = cnn(spectra)
-            outputs = torch.vstack((outputs, output))
-
-    # Transform outputs from normalized to real values
-    outputs = outputs.cpu().numpy()
-    final_time = time() - initial_time
-    print(f'\nParameter prediction time: {final_time:.3f} s'
-          f'\tSpectra per second: {spectra_count / final_time:.2e}')
-
-    loss = xspec_loss(log_params, loader, model, params=outputs)
-
-    return loss
-
-
-def validate(
-        device: torch.device,
-        loader: DataLoader,
-        cnn: Network,
-        surrogate: Network = None) -> tuple[float, np.ndarray, np.ndarray]:
-    """
-    Validates the encoder or decoder using cross entropy or mean squared error
-
-    Parameters
-    ----------
-    device : device
-        Which device type PyTorch should use
-    loader : DataLoader
-        PyTorch DataLoader that contains data to train
-    cnn : CNN
-        Model to use for training
-    surrogate : Network, default = None
-        Surrogate network for encoder training
-
-    Returns
-    -------
-    tuple[float, ndarray, ndarray]
-        Average loss value, spectra & reconstructions
-    """
-    loss = 0
-    cnn.eval()
-
-    if surrogate:
-        surrogate.eval()
-
-    with torch.no_grad():
-        for spectra, params, _ in loader:
-            spectra = spectra.to(device)
-
-            # If surrogate is not none, train encoder with surrogate
-            if surrogate:
-                predictions = cnn(spectra)
-                output = surrogate(predictions)
-                loss += nn.MSELoss()(output, spectra).item()
+            # Use defaults if provided, else if encoder is provided, generate predictions,
+            # else get true parameters
+            if defaults is not None:
+                param_batch = defaults.repeat(data[0].size(0), 1)
+            elif encoder:
+                param_batch = encoder(data[0].to(device)).cpu()
             else:
-                params = params.to(device)
+                param_batch = data[1]
 
-                # Train encoder with supervision or decoder
-                if cnn.encoder:
-                    output = cnn(spectra)
-                    loss += nn.MSELoss()(output, params).item()
-                    # loss += nn.CrossEntropyLoss()(output, params).item()
-                else:
-                    output = cnn(params)
-                    loss += nn.MSELoss()(output, spectra).item()
+            # Transform parameters if not defaults
+            if defaults is None:
+                param_batch = param_batch * param_transform[1] + param_transform[0]
+                param_batch[:, log_params] = 10 ** param_batch[:, log_params]
 
-    return loss / len(loader), spectra.cpu().numpy(), output.cpu().numpy()
+            params.append(param_batch)
+
+    print(f'Parameter retrieval time: {time() - initial_time:.3e} s')
+
+    return xspec_loss(worker_dir, names, torch.cat(params), job_name=job_name)
 
 
-def train(
+def train_val(
         device: torch.device,
         loader: DataLoader,
         cnn: Network,
-        surrogate: Network = None) -> float:
+        train: bool = True,
+        surrogate: Network = None) -> tuple[float, np.ndarray, np.ndarray]:
     """
     Trains the encoder or decoder using cross entropy or mean squared error
 
@@ -197,59 +166,77 @@ def train(
         Which device type PyTorch should use
     loader : DataLoader
         PyTorch DataLoader that contains data to train
-    cnn : CNN
-        Model to use for training
+    cnn : Network
+        CNN to use for training/validation
+    train : bool, default = True
+        If network should be trained or validated
     surrogate : Network, defualt = None
         Surrogate network for encoder training
 
     Returns
     -------
-    float
-        Average loss value
+    tuple[float, ndarray, ndarray]
+        Average loss value, spectra & reconstructions
     """
     epoch_loss = 0
-    cnn.train()
 
-    if surrogate:
-        surrogate.train()
+    if train:
+        cnn.train()
 
-    for spectra, params, _ in loader:
-        spectra = spectra.to(device)
-
-        # If surrogate is not none, train encoder with surrogate
         if surrogate:
-            target = spectra
-            output = surrogate(cnn(spectra))
-        else:
-            params = params.to(device)
+            surrogate.train()
+    else:
+        cnn.eval()
 
-            # Train encoder with supervision or decoder
-            if cnn.encoder:
-                target = params
-                output = cnn(spectra)
-            else:
+        if surrogate:
+            surrogate.eval()
+
+    with torch.set_grad_enabled(train):
+        for spectra, params, *_ in loader:
+            spectra = spectra.to(device)
+
+            # If surrogate is not none, train encoder with surrogate
+            if surrogate:
+                # uncertainties = uncertainties.to(device)
+                output = unweighted_output = surrogate(cnn(spectra))
+
+                # output = unweighted_output / uncertainties
+                # target = spectra / uncertainties
                 target = spectra
-                output = cnn(params)
+            else:
+                params = params.to(device)
 
-        loss = nn.MSELoss()(output, target)
+                # Train encoder with supervision or decoder
+                if cnn.encoder:
+                    output = cnn(spectra)
+                    target = params
+                else:
+                    # uncertainties = uncertainties.to(device)
+                    output = unweighted_output = cnn(params)
 
-        # Optimise CNN
-        cnn.optimizer.zero_grad()
-        loss.backward()
-        cnn.optimizer.step()
+                    # output = unweighted_output / uncertainties
+                    # target = spectra / uncertainties
+                    target = spectra
 
-        epoch_loss += loss.item()
+            loss = nn.MSELoss()(output, target)
 
-    return epoch_loss / len(loader)
+            if train:
+                # Optimise CNN
+                cnn.optimizer.zero_grad()
+                loss.backward()
+                cnn.optimizer.step()
+
+            epoch_loss += loss.item()
+
+    return epoch_loss / len(loader), spectra.cpu().numpy(), unweighted_output.cpu().numpy()
 
 
-def train_val(
-        num_epochs: int,
+def training(
+        epochs: tuple[int, int],
         losses: tuple[list, list],
         loaders: tuple[DataLoader, DataLoader],
         cnn: Network,
         device: torch.device,
-        initial_epoch: int = 0,
         save_num: int = 0,
         states_dir: str = None,
         surrogate: Network = None) -> tuple[tuple[list, list], np.ndarray, np.ndarray]:
@@ -258,8 +245,8 @@ def train_val(
 
     Parameters
     ----------
-    num_epochs : integer
-        Number of epochs to train
+    epochs : tuple[integer, integer]
+        Initial epoch & number of epochs to train
     losses : tuple[list, list]
         Train and validation losses for each epoch
     loaders : tuple[DataLoader, DataLoader]
@@ -268,8 +255,6 @@ def train_val(
         CNN to use for training
     device : device
         Which device type PyTorch should use
-    initial_epoch : integer, default = 0
-        The epoch to start from
     save_num : integer, default = 0
         The file number to save the new state, if 0, nothing will be saved
     states_dir : string, default = None
@@ -284,15 +269,15 @@ def train_val(
     """
 
     # Train for each epoch
-    for epoch in range(num_epochs - initial_epoch):
+    for epoch in range(*epochs):
         t_initial = time()
-        epoch += initial_epoch + 1
+        epoch += 1
 
         # Train CNN
-        losses[0].append(train(device, loaders[0], cnn, surrogate=surrogate))
+        losses[0].append(train_val(device, loaders[0], cnn, surrogate=surrogate)[0])
 
         # Validate CNN
-        losses[1].append(validate(device, loaders[1], cnn, surrogate=surrogate)[0])
+        losses[1].append(train_val(device, loaders[1], cnn, train=False, surrogate=surrogate)[0])
         cnn.scheduler.step(losses[1][-1])
 
         # Save training progress
@@ -309,13 +294,13 @@ def train_val(
 
             torch.save(state, f'{states_dir}{cnn.name}_{save_num}.pth')
 
-        print(f'Epoch [{epoch}/{num_epochs}]\t'
+        print(f'Epoch [{epoch}/{epochs[1]}]\t'
               f'Training loss: {losses[0][-1]:.3e}\t'
               f'Validation loss: {losses[1][-1]:.3e}\t'
               f'Time: {time() - t_initial:.1f}')
 
     # Final validation
-    loss, spectra, outputs = validate(device, loaders[1], cnn, surrogate=surrogate)
+    loss, spectra, outputs = train_val(device, loaders[1], cnn, train=False, surrogate=surrogate)
     losses[1].append(loss)
     print(f'\nFinal validation loss: {losses[1][-1]:.3e}')
 

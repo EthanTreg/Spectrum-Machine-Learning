@@ -1,7 +1,10 @@
 import torch
 import numpy as np
+from numpy import ndarray
 from torch import nn, Tensor
 from torch.utils.data import Dataset, DataLoader, Subset
+
+from src.utils.utils import even_length
 
 
 class SpectrumDataset(Dataset):
@@ -12,9 +15,11 @@ class SpectrumDataset(Dataset):
     ----------
     spectra : tensor
         Spectra dataset
+    uncertainty : tensor
+        Spectral Poisson uncertainty
     params : tensor
         Parameters for each spectra if supervised
-    transform : list[list[ndarray]]
+    transform : list[tuple[ndarray, ndarray]]
         Min and max spectral range and mean & standard deviation of parameters
     names : ndarray
         Names of each spectrum
@@ -23,6 +28,11 @@ class SpectrumDataset(Dataset):
 
     Methods
     -------
+    min_clamp(data)
+        Clamps all values <= 0 to the minimum non-zero positive value
+    data_normalization(data, mean, transform)
+        Transforms data either by normalising or
+        scaling between 0 & 1 depending on if mean is true or false.
     downscaler(downscales)
         Downscales input spectra
     """
@@ -31,7 +41,7 @@ class SpectrumDataset(Dataset):
             data_file: str,
             labels_file: str,
             log_params: list,
-            transform: list[list[np.ndarray]] = None):
+            transform: list[tuple[ndarray, ndarray]] = None):
         """
         Parameters
         ----------
@@ -41,67 +51,66 @@ class SpectrumDataset(Dataset):
             Path to the labels file, if none, then an unsupervised approach is used
         log_params : list
             Index of each free parameter in logarithmic space
-        transform : list[ndarray], default = None
+        transform : list[tuple[ndarray, ndarray]], default = None
             Min and max spectral range and mean & standard deviation of parameters
             used for transformation after log
         """
-        self.transform = transform
         self.indices = None
-        spectra = np.load(data_file)
+        self.spectra, self.uncertainty = np.rollaxis(np.load(data_file), 1)
+        # self.spectra = np.load(data_file)
 
-        # Set negative values equal to minimum real value
-        if np.min(spectra) < 0:
-            spectra = np.swapaxes(spectra, 0, 1)
-            min_count = np.min(spectra, where=spectra > 0, initial=np.max(spectra), axis=0)
-            spectra = np.swapaxes(np.maximum(spectra, min_count), 0, 1)
-
-        spectra = np.log10(spectra)
-
-        # Get spectra min and max values if transformation not supplied
         if transform:
-            spectra_transform = transform[0]
+            spectra_transform, params_transform = transform
         else:
-            spectra_transform = [np.min(spectra), np.max(spectra)]
-            self.transform = [spectra_transform]
+            spectra_transform = params_transform = None
 
-        # Scale spectra between 0 and 1
-        self.spectra = torch.from_numpy(
-            (spectra - spectra_transform[0]) / (spectra_transform[1] - spectra_transform[0])
-        ).float()
+        # Set negative values equal to minimum positive value
+        if np.min(self.spectra) <= 0:
+            self.spectra = self.min_clamp(self.spectra)
 
-        # Make sure spectra length is even
-        if self.spectra.size(1) % 2 != 0:
-            self.spectra = torch.cat((
-                self.spectra[:, :-2],
-                torch.mean(self.spectra[:, -2:], dim=1, keepdim=True)
-            ), dim=1)
+        if np.min(self.uncertainty) <= 0:
+            self.uncertainty = self.min_clamp(self.uncertainty)
+
+        # self.spectra /= self.uncertainty
+
+        # Transform spectra & uncertainty
+        self.uncertainty = np.log10(1 + self.uncertainty / self.spectra)
+        self.spectra = np.log10(self.spectra)
+        self.spectra, spectra_transform = self.data_normalization(
+            self.spectra,
+            mean=False,
+            transform=spectra_transform,
+        )
+        self.uncertainty /= spectra_transform[1]
+
+        # Make sure spectra & uncertainty length is even
+        self.spectra = even_length(torch.from_numpy(self.spectra).float())
+        self.uncertainty = even_length(torch.from_numpy(self.uncertainty).float())
 
         # Load spectra parameters and names
         if '.npy' in labels_file:
-            params = np.load(labels_file)
+            self.params = np.load(labels_file)
             self.names = np.arange(self.spectra.size(0))
         else:
             labels = np.loadtxt(labels_file, skiprows=6, dtype=str)
-            params = labels[:, 9:].astype(float)
+            self.params = labels[:, 9:].astype(float)
             self.names = labels[:, 6]
 
-        params[:, log_params] = np.log10(params[:, log_params])
+        self.params[:, log_params] = np.log10(self.params[:, log_params])
+
+        self.params, params_transform = self.data_normalization(
+            self.params,
+            transform=params_transform,
+        )
+        self.params = torch.from_numpy(self.params).float()
 
         # Get parameter mean and standard deviation if transformation not supplied
-        if transform:
-            param_transform = transform[1]
-        else:
-            param_transform = [np.mean(params, axis=0), np.std(params, axis=0)]
-            self.transform.append(param_transform)
-
-        # Normalize parameters with mean of 0 and standard deviation of 1
-        params = (params - param_transform[0]) / param_transform[1]
-        self.params = torch.from_numpy(params).float()
+        self.transform = [spectra_transform, params_transform]
 
     def __len__(self):
         return self.spectra.shape[0]
 
-    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, str | int]:
+    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, Tensor, str | int]:
         """
         Gets the spectrum data for a given index
         If supervised learning return target parameters of spectrum otherwise returns spectrum name
@@ -113,10 +122,69 @@ class SpectrumDataset(Dataset):
 
         Returns
         -------
-        (tensor, tensor, str)
-            Spectrum data, target parameters and spectrum name
+        (Tensor, Tensor, Tensor, str | int)
+            Spectrum data, target parameters, spectrum uncertainty and spectrum name/number
         """
-        return self.spectra[idx], self.params[idx], self.names[idx]
+        return self.spectra[idx], self.params[idx], self.uncertainty[idx], self.names[idx]
+
+    def min_clamp(self, data: ndarray) -> ndarray:
+        """
+        Clamps all values <= 0 to the minimum non-zero positive value
+
+        Parameters
+        ----------
+        data : ndarray
+            Input data to be clamped
+
+        Returns
+        -------
+        ndarray
+            Clamped data
+        """
+        data = np.swapaxes(data, 0, 1)
+        min_count = np.min(
+            data,
+            where=data > 0,
+            initial=np.max(data),
+            axis=0,
+        )
+
+        return np.swapaxes(np.maximum(data, min_count), 0, 1)
+
+    def data_normalization(
+            self,
+            data: ndarray,
+            mean: bool = True,
+            transform: tuple[float, float] = None) -> tuple[ndarray, tuple[float, float]]:
+        """
+        Transforms data either by normalising or
+        scaling between 0 & 1 depending on if mean is true or false.
+
+        Parameters
+        ----------
+        data : ndarray
+            Data to be normalised
+        mean : bool, default = True
+            If data should be normalised or scaled between 0 and 1
+        transform: tuple[float, float], default = None
+            If transformation values exist already
+
+        Returns
+        -------
+        tuple[ndarray, tuple[float, float]]
+            Transformed data & transform values
+        """
+        if mean and not transform:
+            transform = [np.mean(data, axis=0), np.std(data, axis=0)]
+        elif not mean and not transform:
+            transform = [
+                np.min(data),
+                np.max(data) - np.min(data)
+            ]
+
+        data = (data - transform[0]) / transform[1]
+
+        return data, transform
 
     def downscaler(self, downscales: int):
         """
@@ -137,7 +205,7 @@ class SpectrumDataset(Dataset):
         self.spectra = self.spectra.squeeze(dim=1)
 
 
-def load_x_data(y_size: int) -> np.ndarray:
+def load_x_data(y_size: int) -> ndarray:
     """
     Fetches x data from file and matches the length to the y data
 
@@ -171,8 +239,8 @@ def data_initialisation(
         log_params: list,
         kwargs: dict,
         val_frac: float = 0.1,
-        transform: list[list[np.ndarray]] = None,
-        indices: np.ndarray = None) -> tuple[DataLoader, DataLoader]:
+        transform: list[list[ndarray]] = None,
+        indices: ndarray = None) -> tuple[DataLoader, DataLoader]:
     """
     Initialises training and validation data
 
@@ -198,6 +266,8 @@ def data_initialisation(
     tuple[DataLoader, DataLoader]
         Dataloaders for the training and validation datasets
     """
+    batch_size = 120
+
     # Fetch dataset & create train & val data
     dataset = SpectrumDataset(spectra_path, labels_path, log_params, transform=transform)
     val_amount = int(len(dataset) * val_frac)
@@ -205,14 +275,15 @@ def data_initialisation(
     # If network hasn't trained on data yet, randomly separate training and validation
     if indices is None or indices.size != len(dataset):
         indices = np.random.choice(len(dataset), len(dataset), replace=False)
-        dataset.indices = indices
+
+    dataset.indices = indices
 
     train_dataset = Subset(dataset, indices[:-val_amount])
     val_dataset = Subset(dataset, indices[-val_amount:])
 
     # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, **kwargs)
-    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=True, **kwargs)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 
     print(f'Training data size: {len(train_dataset)}\tValidation data size: {len(val_dataset)}\n')
 

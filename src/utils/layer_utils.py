@@ -177,6 +177,17 @@ def linear(kwargs: dict, layer: dict) -> dict:
 
     linear_layer = nn.Linear(in_features=kwargs['dims'][-2], out_features=kwargs['dims'][-1])
     kwargs['module'].add_module(f"linear_{kwargs['i']}", linear_layer)
+
+    # Optional batch normalization layer
+    try:
+        if layer['dropout']:
+            kwargs['module'].add_module(
+                f"dropout_{kwargs['i']}",
+                nn.Dropout1d(kwargs['dropout_prob'])
+            )
+    except KeyError:
+        pass
+
     kwargs['module'].add_module(f"SELU_{kwargs['i']}", nn.SELU())
 
     # Data size equals number of nodes

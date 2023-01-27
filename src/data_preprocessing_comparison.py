@@ -37,10 +37,12 @@ def diff_plot(
     plt.scatter(x_data_1, diff)
     plt.xlabel('Energy (keV)', fontsize=20)
     plt.ylabel('PyXspec / fits data', fontsize=20)
-    plt.text(0.05, 0.2,
-             f'Average ratio: {round(np.mean(diff), 3)}',
-             fontsize=16, transform=plt.gca().transAxes
-             )
+    plt.text(
+        0.05,
+        0.2,
+        f'Average ratio: {round(np.mean(diff), 3)}',
+        fontsize=16, transform=plt.gca().transAxes
+    )
 
 
 def spectrum_plot(x_bin: np.ndarray, y_bin: np.ndarray, x_px: np.ndarray, y_px: np.ndarray):
@@ -75,28 +77,28 @@ def main():
     """
     # Variables
     plot_diff = True
-    data_root = ''
-    spectrum = './data/synth_spectra/synth_03.fits'
+    data_root = '../'
+    spectrum = './data/synth_spectra/synth_000000.fits'
+    # data_root = '../../../Documents/Nicer_Data/spectra/'
+    # spectrum = './js_ni2101010101_0mpu7_goddard_GTI0.jsgrp'
 
     # Constant
     root_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # PyXspec data & plotting
     os.chdir(data_root)
+    x_bin, y_bin, _, detectors = spectrum_data(spectrum, '')
+
+    # PyXspec data & plotting
     Spectrum(spectrum)
     Plot.device = '/NULL'
     Plot.xAxis = 'keV'
-    # Plot.yLog = True
-    # Plot.addCommand('rescale x 0.15 15')
-    # Plot.addCommand('rescale y 1e-3 60')
     Plot('data')
     os.chdir(root_dir)
 
     # PyXspec data
     x_px = np.array(Plot.x())[:-1]
-    y_px = np.array(Plot.y())[:-1] / 49
+    y_px = np.array(Plot.y())[:-1] / detectors
 
-    x_bin, y_bin, _ = spectrum_data(spectrum, '')
 
     # Pyplot plotting of binned fits data & PyXspec data
     if plot_diff:
