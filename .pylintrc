@@ -1,6 +1,6 @@
 [MASTER]
 ignore-patterns=(.)*_test\.py,test_(.)*\.py,test.py
-init-hook='import sys; import os; sys.path.append(os.path.dirname(os.path.abspath(__file__)))'
+init-hook="import sys; sys.path.append('.')"
 
 [BASIC]
 good-names=f, i, j, k, y
@@ -8,3 +8,7 @@ good-names-rgxs=x[0-9]?$
 
 [TYPECHECK]
 generated-members=torch.*
+ignored-classes=HDUList,mpi4py.MPI
+
+[pylint.FORMAT]
+disable=logging-fstring-interpolation

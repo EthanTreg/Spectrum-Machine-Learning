@@ -8,4 +8,5 @@
 /.vscode
 /data/
 /plots/
-/model_states/
+/model_states/*
+!/model_states/*_1.pth
