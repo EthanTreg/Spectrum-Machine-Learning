@@ -1,16 +1,14 @@
 """
 Normalises and bins spectra and can perform background augmentation and synthetic splicing
 """
-import argparse
 from time import time
 import multiprocessing as mp
 
-import yaml
 import numpy as np
 from numpy import ndarray
 
-from fspnet.utils.utils import progress_bar, file_names
 from fspnet.utils.preprocessing_utils import correct_spectrum
+from fspnet.utils.utils import progress_bar, file_names, open_config
 
 
 def _worker(
@@ -73,13 +71,7 @@ def preprocess(config_path: str = '../config.yaml'):
         File path to the configuration file
     """
     # If run by command line, optional argument can be used
-    parser = argparse.ArgumentParser()
-    parser.add_argument('config_path', nargs='?', default=config_path)
-    args = parser.parse_args()
-    config_path = args.config_path
-
-    with open(config_path, 'r', encoding='utf-8') as file:
-        config = list(yaml.safe_load_all(file))[1]
+    config_path, config = open_config(1, config_path)
 
     # Initialize variables
     aug_count = config['augmentation']['augmentation_number']
@@ -90,6 +82,7 @@ def preprocess(config_path: str = '../config.yaml'):
 
     # Constants
     params = None
+    blacklist = ['bkg', '.bg', '.rmf', '.arf']
     cpus = mp.cpu_count()
     initial_time = time()
     processes = []
@@ -98,14 +91,14 @@ def preprocess(config_path: str = '../config.yaml'):
 
     # Fetch spectra names & labels
     if '.npy' in params_path:
-        spectra_files = file_names(data_dir, blacklist='bkg')
+        spectra_files = np.char.add(data_dir, file_names(data_dir, blacklist=blacklist))
         params = np.load(params_path)
     elif params_path:
         labels = np.loadtxt(params_path, skiprows=6, dtype=str)
         spectra_files = np.char.add(data_dir, labels[:, 6])
         params = labels[:, 9:].astype(float)
     else:
-        spectra_files = file_names(data_dir, blacklist='bkg')
+        spectra_files = np.char.add(data_dir, file_names(data_dir, blacklist=blacklist))
 
     # Duplicate parameters if provided and augmentation is used
     if aug_count and params:

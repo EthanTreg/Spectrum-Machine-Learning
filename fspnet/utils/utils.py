@@ -2,7 +2,9 @@
 Misc functions used elsewhere
 """
 import os
+import argparse
 
+import yaml
 import torch
 import numpy as np
 
@@ -56,16 +58,17 @@ def even_length(x: torch.Tensor) -> torch.Tensor:
     return x
 
 
-def file_names(data_dir: str, blacklist: str = None, whitelist: str = None) -> np.ndarray:
+def file_names(data_dir: str, blacklist: list[str] = None, whitelist: str = None) -> np.ndarray:
     """
-    Fetches the file names of all spectra up to the defined data amount
+    Fetches the file names of all spectra that are in the whitelist, if not None,
+    or not on the blacklist, if not None
 
     Parameters
     ----------
     data_dir : string
         Directory of the spectra dataset
-    blacklist : string, default = None
-        Exclude all files with substring
+    blacklist : list[string], default = None
+        Exclude all files with substrings
     whitelist : string, default = None
         Require all files have the substring
 
@@ -82,7 +85,34 @@ def file_names(data_dir: str, blacklist: str = None, whitelist: str = None) -> n
         files = np.delete(files, np.char.find(files, whitelist) == -1)
 
     # Remove all files that are blacklisted
-    if blacklist:
-        files = np.delete(files, np.char.find(files, blacklist) != -1)
+    for substring in blacklist:
+        files = np.delete(files, np.char.find(files, substring) != -1)
 
-    return np.char.add(data_dir, files)
+    return files
+
+
+def open_config(idx: int, config_path: str) -> tuple[str, dict]:
+    """
+    Opens the configuration file from either the provided path or through command line argument
+
+    Parameters
+    ----------
+    idx : integer
+        Index of the configuration file
+    config_path : string
+        Default path to the configuration file
+
+    Returns
+    -------
+    tuple[string, dictionary]
+        Configuration path and configuration file dictionary
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('config_path', nargs='?', default=config_path)
+    args = parser.parse_args()
+    config_path = args.config_path
+
+    with open(config_path, 'r', encoding='utf-8') as file:
+        config = list(yaml.safe_load_all(file))[idx]
+
+    return config_path, config

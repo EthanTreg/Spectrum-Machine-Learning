@@ -277,6 +277,7 @@ def training(
         if save_num:
             state = {
                 'epoch': epoch,
+                'transform': loaders[0].dataset.dataset.transform,
                 'train_loss': losses[0],
                 'val_loss': losses[1],
                 'indices': loaders[0].dataset.dataset.indices,

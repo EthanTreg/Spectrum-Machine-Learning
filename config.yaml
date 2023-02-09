@@ -37,6 +37,8 @@ data:
   spectra-directory: '../../../Documents/Nicer_Data/spectra/'
 # Model for the network to learn
 model:
+  # Number of free parameters
+  parameters-number: 5
   # Xspec model to use
   model-name: 'tbabs(simplcutx(ezdiskbb))'
   # Name of custom model that has to be loaded, can be empty
@@ -123,12 +125,12 @@ synthesize:
 # All paths are relative to the parent folder due to string overflows in fits files
 data:
   # Path to the directory of spectra fits files
-  # Should be the same as for spectrum_fit.py, but one level higher
-  spectra-directory: '../../Documents/Nicer_Data/spectra/'
+  # Should be the same as for spectrum_fit.py
+  spectra-directory: '../../spectra/'
   # Path to the spectra names file, leave empty if this doesn't exist,
   # file names in spectra-directory will be used instead
-  # Should be the same as for spectrum_fit.py, but one level higher
-  spectra-names-file: './data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
+  # Should be the same as for spectrum_fit.py
+  spectra-names-file: '../data/nicer_bh_specfits_simplcut_ezdiskbb_freenh.dat'
 # Model to base the synthetic spectra off
 model:
   # Xspec model to use
@@ -137,8 +139,8 @@ model:
   # Should be the same as for spectrum_fit.py
   custom-model-name: 'simplcutx'
   # Directory to custom model, can be empty
-  # Should be the same as for spectrum_fit.py, but relative to parent
-  model-directory: '../../Documents/Xspec_Models/simplcutx'
+  # Should be the same as for spectrum_fit.py
+  model-directory: '../../../Documents/Xspec_Models/simplcutx'
   # Index starting from 1 and value for each fixed parameter
   # Should be the same as for spectrum_fit.py but as a dictionary
   fixed-parameters:
@@ -175,9 +177,9 @@ model:
 # Directory locations for different outputs
 output:
   # Path to the directory to output synthetic spectra fits files
-  synthetic-directory: './data/synth_spectra/'
+  synthetic-directory: '../data/synth_spectra/'
   # Path to save the corrected and normalized spectra file
-  synthetic-data: './data/synth_spectra.npy'
+  synthetic-data: '../data/synth_spectra.npy'
 
 # network_optimizer.py config file
 ---

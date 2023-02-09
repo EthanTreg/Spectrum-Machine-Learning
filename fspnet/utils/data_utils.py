@@ -88,7 +88,8 @@ class SpectrumDataset(Dataset):
         # If no parameters are provided
         if not params_path:
             self.params = np.empty(self.spectra.size(0))
-            self.transform = [spectra_transform, None]
+            self.transform = transform
+            self.names = np.arange(self.spectra.size(0))
             return
 
         # Load spectra parameters and names

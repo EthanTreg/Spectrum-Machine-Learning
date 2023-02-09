@@ -2,15 +2,15 @@
 Main spectral machine learning module
 """
 import os
-import argparse
 import logging as log
 
 import yaml
 import torch
-import numpy as np
 import matplotlib
+import numpy as np
 from torch.utils.data import DataLoader
 
+from fspnet.utils.utils import open_config
 from fspnet.utils.data_utils import data_initialisation
 from fspnet.utils.train_utils import training, pyxspec_test
 from fspnet.utils.network_utils import load_network, Network
@@ -62,6 +62,7 @@ def initialization(
 
     # Load config parameters
     load_num = config['training'][f'{network_type}-load']
+    num_params = config['model']['parameters-number']
     learning_rate = config['training']['learning-rate']
     networks_dir = config['training']['network-configs-directory']
     spectra_path = config['data'][f'{network_type}-data-path']
@@ -74,12 +75,14 @@ def initialization(
         os.makedirs(states_dir)
 
     # Set device to GPU if available
-    device = torch.device('cuda' if not torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
 
     if load_num:
         try:
-            indices = torch.load(f'{states_dir}{name}_{load_num}.pth')['indices']
+            state = torch.load(f'{states_dir}{name}_{load_num}.pth')
+            indices = state['indices']
+            transform = state['transform']
         except FileNotFoundError:
             log.warning(f'{states_dir}{name}_{load_num}.pth does not exist\n'
                   f'No state will be loaded')
@@ -101,7 +104,7 @@ def initialization(
     # Initialize network
     network = Network(
         loaders[0].dataset[0][0].size(0),
-        loaders[0].dataset[0][1].size(0),
+        num_params,
         learning_rate,
         name,
         networks_dir,
@@ -169,13 +172,7 @@ def main(config_path: str = '../config.yaml'):
         File path to the configuration file
     """
     # If run by command line, optional argument can be used
-    parser = argparse.ArgumentParser()
-    parser.add_argument('config_path', nargs='?', default=config_path)
-    args = parser.parse_args()
-    config_path = args.config_path
-
-    with open(config_path, 'r', encoding='utf-8') as file:
-        config = list(yaml.safe_load_all(file))[0]
+    config_path, config = open_config(0, config_path)
 
     # Training variables
     num_epochs = config['training']['epochs']

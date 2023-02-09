@@ -1,8 +1,31 @@
 # Fast Spectra Predictor Network (FSP-Net)
 
-## 1 Requirements
+## Contents
 
-***
+* [**1 Requirements**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#1-requirements)  
+* [**2 Information**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#2-information)  
+    * [**2.1 Description**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#21-description)  
+    * [**2.2 System Specification**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#22-system-specification)
+    * [**2.3 Training Times**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#23-training-times)
+    * [**2.4 Data Compatibility**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#24-data-compatibility)
+* [**3 How to Use**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#3-how-to-use)
+    * [**3.1 Using the Pre-Trained FSP-Net**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#31-using-the-pre-trained-fsp-net)
+      * [**3.1.1 Data Requirements**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#311-data-requirements)
+      * [**3.1.2 Data Preprocessing**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#312-data-preprocessing)
+      * [**3.1.3 Network Configuration**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#313-network-configuration)
+      * [**3.1.4 Fitting the Data**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#314-fitting-the-data)
+    * [**3.2 Training the Autoencoder**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#32-training-the-autoencoder)
+      * [**3.2.1 Generating Synthetic Data**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#321-generating-synthetic-data)
+      * [**3.2.2 Training the Autoencoder**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#322-training-the-autoencoder)
+* [**4 Analysis Tools**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#4-analysis-tools)
+    * [**4.1 Plotting Reconstructions and Loss per Epoch**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#41-plotting-reconstructions-and-loss-per-epoch)
+    * [**4.2 Calculating & Plotting the Saliency**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#42-calculating-&-plotting-the-saliency)
+    * [**4.3 Getting the PGStatistics of the Encoder**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#43-getting-the-pgstatistics-of-the-encoder)
+* [**5 Modifying the Network**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#5-modifying-the-network)
+    * [**5.1 Manually Configuring the Network**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#51-manually-configuring-the-network)
+    * [**5.2 Optimising Hyperparameters using Optuna**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#52-optimising-hyperparameters-using-optuna)
+
+## 1 Requirements
 
 * Install dependencies:  
 `pip install -r requirements.txt`  
@@ -11,8 +34,6 @@ NVIDIA GPU with CUDA Toolkit ~= v11.6
 [^1]: Only required for use with NVIDIA GPU
 
 ## 2 Information
-
-***
 
 ### 2.1 Description
 
@@ -27,13 +48,13 @@ The system specs used to develop the network are:
 * CPU: Intel 6C/12T, 2.6 GHz - 5 GHz (i7-10750H)
 * GPU: NVIDIA 4 GB VRAM, 1035 - 1200 MHz (1650 Ti Max-Q)
 
-NVIDIA GPUs with more than 1 GB of VRAM[^2] are highly recommended.
-[^2]: If your NVIDIA GPU has less than 1 GB of VRAM,
-set `kwargs={}` in `spectrum_fit.py`&rarr;`initialization`  
+NVIDIA GPUs with more than 1 GB of VRAM[^2] are highly recommended.  
 All CPUs that can run PyTorch should work fine, but will be significantly slower.  
 The code has not been developed for other brands of GPUs or NPUs,
 so it won't take advantage of them.  
 SSDs are also highly recommended as this can speed up data loading times.
+[^2]: If your NVIDIA GPU has less than 1 GB of VRAM,
+set `kwargs={}` in `spectrum_fit.py`&rarr;`initialization`
 
 ### 2.3 Training Times
 Training the decoder for 200 epochs with 100,000 spectra
@@ -53,8 +74,6 @@ so feel free to adapt it and train it to different use cases.
 
 ## 3 How to Use
 
-***
-
 There is a configuration file, `config.yaml` that has several variables that can be changed.
 There are 4 sections within `config.yaml` denoted by `---`:
 * `spectrum_fit.py config file` - Main autoencoder script
@@ -66,7 +85,7 @@ These sections will be referenced throughout this `README`.
 
 All file paths can be absolute or relative.
 
-### 3.1 Using the Pre-trained FSP-Net
+### 3.1 Using the Pre-Trained FSP-Net
 
 The network has been trained on a simple 5-parameter model from Xspec, tbabs(simplcutx(ezdiskbb)).  
 Therefore, weights are provided if this is the desired model for parameter prediction.
@@ -148,11 +167,10 @@ by training the network as an autoencoder.
 
 Synthetic spectra is generated using Xspec with the model that you want to fit.  
 This can be done independently; however, the data needs to meet the requirements as mentioned in
-[Data Requirements](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#2.1.1-Data-Requirements).  
+[Data Requirements](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#311-data-requirements).  
 Alternatively, the script `synthesize_spectra.py` can be used to generate the spectra for you.  
-**WARNING**: due to string character limits in fits files,
-the script runs in the parent directory of the root; therefore,
-all file paths in `config.yaml` will be relative to the parent directory.
+**WARNING**: due to string character limits in fits files, if any paths are too long,
+they will get truncated, preventing files from being opened correctly.
 
 1. Configure settings in `synthesize_spectra.py config file`:
    * `synthesize` options:
@@ -207,10 +225,11 @@ The following steps assumes you are using the recommended method.
       * `decoder-parameters-path`: _synthetic parameters path_
       * `encoder-data-path`: _spectra path_
     * `model` options:
+      * `parameters-number`: _number of free parameters in the model_
       * `model-name`: _Xspec name of the model_, same as used for generating synthetic spectra
       * `custom-model-name`: _Xspec name of custom model to be imported_,
         same as used for generating synthetic spectra
-      * `model-directory`: _Custom model directory path_,
+      * `model-directory`: _custom model directory path_,
         same as used for generating synthetic spectra
       * `log-parameters`: _list of **free** parameter with indices **starting from 0**_,
         used for any parameter that spans a large range,
@@ -294,12 +313,10 @@ Both networks should now be trained and their states should be saved to `network
 with the file name `Decoder V2_2.pth` & `Encoder V3_2.pth`.
 
 To generate the spectra parameter predictions, go to section
-[Fitting the Data](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#2.1.4-Fitting-the-Data),
+[Fitting the Data](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#314-fitting-the-data),
 but replace `encoder-load` with 2.
 
 ## 4 Analysis Tools
-
-***
 
 There are several functions included that can help with training the network and
 measuring the performance.
@@ -383,8 +400,6 @@ median_pgstat, parameters = pyxspec_test(
 ```
 
 ## 5 Modifying the Network
-
-***
 
 The code is designed to try and be as general as possible;
 therefore, it should be very easy to change the architecture.  

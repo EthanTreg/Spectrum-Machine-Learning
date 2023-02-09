@@ -2,17 +2,16 @@
 Generates synthetic data using PyXspec
 """
 import os
-import argparse
 from time import time
+import logging as log
 
-import yaml
 import xspec
 import numpy as np
 from astropy.io import fits
 
-from fspnet.utils.utils import progress_bar, file_names
 from fspnet.utils.pyxspec_worker import initialize_pyxspec
 from fspnet.utils.preprocessing_utils import correct_spectrum
+from fspnet.utils.utils import progress_bar, file_names, open_config
 
 
 def _delete_synth(synth_dir: str, synth_data: str):
@@ -33,12 +32,13 @@ def _delete_synth(synth_dir: str, synth_data: str):
 
     if os.path.exists(synth_data):
         os.remove(synth_data)
-        os.remove(synth_data[:-4] + '_params.npy')
+        os.remove(synth_data.replace('_spectra.npy', '_params.npy'))
 
 
 def _generate_synth(current_num: int,
-                    exposure: float = 1e3,
-                    config_path: str = './config.yaml') -> np.ndarray:
+                    config: dict,
+                    spectra_names: np.ndarray,
+                    exposure: float = 1e3) -> np.ndarray:
     """
     Generates synthetic spectra using PyXspec
 
@@ -46,24 +46,22 @@ def _generate_synth(current_num: int,
     ----------
     current_num : integer
         Number of existing synthetic spectra
+    config : dict
+        Configuration settings
+    spectra_names : ndarray
+        Names of real spectra to randomly sample
     exposure : float, default = 1000
         Exposure time of synthetic spectra
-    config_path : string, default = './config.yaml'
-        File path to the configuration file
 
     Returns
     -------
     ndarray
         Synthetic params
     """
-    with open(config_path, 'r', encoding='utf-8') as file:
-        config = list(yaml.safe_load_all(file))[2]
-
     # Load variables
     synth_num = config['synthesize']['spectra-per-batch']
     load_frequency = config['synthesize']['fake-per-background']
     data_dir = config['data']['spectra-directory']
-    labels_path = config['data']['spectra-names-file']
     synth_dir = config['output']['synthetic-directory']
     fixed_params = config['model']['fixed-parameters']
     param_limits = config['model']['parameter-limits']
@@ -80,12 +78,6 @@ def _generate_synth(current_num: int,
         np.zeros(model.nParameters)
     )) | fixed_params
     synth_params = np.empty((0, len(params) - len(fixed_params)))
-
-    # Get spectra file names to randomly sample
-    if labels_path:
-        spectra_names = np.loadtxt(labels_path, skiprows=6, usecols=6, dtype=str)
-    else:
-        spectra_names = file_names(data_dir, blacklist='bkg')
 
     for i in range(synth_num):
         # Retrieve background and response spectrum
@@ -168,16 +160,12 @@ def _clean_synth(
     detectors = np.array(())
 
     # Retrieve synthetic spectra names
-    synth_names = np.sort(np.array(os.listdir(synth_dir)))
-    synth_names = np.delete(
-        synth_names,
-        np.char.find(synth_names, '_bkg') != -1
-    )[current_num:]
+    synth_names = np.char.add(synth_dir, file_names(synth_dir, blacklist=['bkg'])[current_num:])
     synth_num = synth_names.size
 
     # Retrieve synthetic spectra data
     for i, spectrum in enumerate(synth_names):
-        detector, _, data = correct_spectrum(synth_dir + spectrum)
+        detector, _, data = correct_spectrum(spectrum)
         synth.extend(data)
         detectors = np.append(detectors, detector)
         progress_bar(i, synth_num)
@@ -191,8 +179,8 @@ def _clean_synth(
 
     # Remove bad synthetic spectra
     for bad_synth in bad_indices:
-        os.remove(synth_dir + synth_names[bad_synth])
-        os.remove(synth_dir + synth_names[bad_synth][:-5] + '_bkg.fits')
+        os.remove(synth_names[bad_synth])
+        os.remove(synth_names[bad_synth].replace('.fits', '_bkg.fits'))
 
     synth = np.delete(synth, bad_indices, axis=0)
     params = np.delete(params, bad_indices, axis=0)
@@ -222,7 +210,7 @@ def _fix_names(current_num: int, synth_num: int, synth_dir: str):
         Directory of synthetic spectra
     """
     # Find existing synthetic spectra names
-    synth_names = file_names(synth_dir, blacklist='bkg')
+    synth_names = file_names(synth_dir, blacklist=['bkg'])
 
     if synth_names.size > synth_num:
         synth_num = synth_names.size
@@ -244,7 +232,7 @@ def _fix_names(current_num: int, synth_num: int, synth_dir: str):
         progress_bar(i, synth_names.size)
 
 
-def main(config_path: str = './config.yaml'):
+def main(config_path: str = '../config.yaml'):
     """
     Main function for generating synthesized data
 
@@ -253,27 +241,16 @@ def main(config_path: str = './config.yaml'):
     config_path : string, default = '../config.yaml'
         File path to the configuration file
     """
-    # Raise directory otherwise file path length is too long for fits file, not ideal solution
-    root_dir = os.getcwd()
-    os.chdir('../')
-
     # If run by command line, optional argument can be used
-    parser = argparse.ArgumentParser()
-    parser.add_argument('config_path', nargs='?', default=config_path)
-    args = parser.parse_args()
-    config_path = args.config_path
-
-    with open(config_path, 'r', encoding='utf-8') as file:
-        config = list(yaml.safe_load_all(file))[2]
+    config_path, config = open_config(2, config_path)
 
     # Variables
     total_synth_num = config['synthesize']['synthetic-number']
     synth_num = config['synthesize']['spectra-per-batch']
+    data_dir = config['data']['spectra-directory']
+    labels_path = config['data']['spectra-names-file']
     synth_dir = config['output']['synthetic-directory']
     synth_data = config['output']['synthetic-data']
-
-    # Constant
-    success = int(len(os.listdir(synth_dir)) / 2)
 
     if not os.path.exists(synth_dir):
         os.makedirs(synth_dir)
@@ -282,6 +259,21 @@ def main(config_path: str = './config.yaml'):
     if config['synthesize']['clear-spectra']:
         _delete_synth(synth_dir, synth_data)
 
+    # Constant
+    success = int(len(os.listdir(synth_dir)) / 2)
+    blacklist = ['bkg', '.bg', '.rmf', '.arf']
+
+    # Get spectra file names to randomly sample
+    if labels_path:
+        try:
+            spectra_names = np.loadtxt(labels_path, skiprows=6, usecols=6, dtype=str)
+        except FileNotFoundError:
+            log.warning(f'{labels_path} does not exist\n'
+                        f'File names from {data_dir} will be used instead')
+            spectra_names = file_names(data_dir, blacklist=blacklist)
+    else:
+        spectra_names = file_names(data_dir, blacklist=blacklist)
+
     # TODO: Multiprocessing
     while success < total_synth_num:
         initial_time = time()
@@ -289,7 +281,7 @@ def main(config_path: str = './config.yaml'):
 
         # Generate synthetic spectra
         print('\nGenerating synthetic spectra...')
-        params = _generate_synth(current_num, config_path=config_path)
+        params = _generate_synth(current_num, config, spectra_names)
 
         # Remove bad synthetic spectra
         print('\nRemoving bad synthetic spectra...')
@@ -304,8 +296,6 @@ def main(config_path: str = './config.yaml'):
               f'\tSuccess: {success - current_num} / {synth_num} '
               f'{100 * (success - current_num) / synth_num:.1f} %'
               f'\tTime: {time() - initial_time:.2f} s')
-
-    os.chdir(root_dir)
 
 
 if __name__ == '__main__':

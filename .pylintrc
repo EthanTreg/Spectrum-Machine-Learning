@@ -8,7 +8,7 @@ good-names-rgxs=x[0-9]?$
 
 [TYPECHECK]
 generated-members=torch.*
-ignored-classes=HDUList,mpi4py.MPI
+ignored-classes=HDUList,mpi4py.MPI,Dataset
 
 [pylint.FORMAT]
 disable=logging-fstring-interpolation
