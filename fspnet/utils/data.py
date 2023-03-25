@@ -57,7 +57,13 @@ class SpectrumDataset(Dataset):
         """
         self.indices = None
         self.log_params = log_params
-        self.spectra, self.uncertainty = np.rollaxis(np.load(data_file), 1)
+        data = np.load(data_file)
+
+        if len(data.shape) == 3:
+            self.spectra, self.uncertainty = np.rollaxis(np.load(data_file), 1)
+        else:
+            self.spectra = np.load(data_file)
+            self.uncertainty = np.empty_like(self.spectra)
 
         if transform:
             spectra_transform, params_transform = transform
@@ -112,22 +118,21 @@ class SpectrumDataset(Dataset):
         # Get parameter mean and standard deviation if transformation not supplied
         self.transform = [spectra_transform, params_transform]
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.spectra.shape[0]
 
     def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, Tensor, str | int]:
         """
-        Gets the spectrum data for a given index
-        If supervised learning return target parameters of spectrum otherwise returns spectrum name
+        Gets the training data for a given index
 
         Parameters
         ----------
-        idx : int
+        idx : integer
             Index of the target spectrum
 
         Returns
         -------
-        (Tensor, Tensor, Tensor, str | int)
+        tuple[Tensor, Tensor, Tensor, string | integer]
             Spectrum data, target parameters, spectrum uncertainty and spectrum name/number
         """
         return self.spectra[idx], self.params[idx], self.uncertainty[idx], self.names[idx]

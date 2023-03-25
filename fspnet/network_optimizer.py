@@ -11,9 +11,9 @@ import joblib
 import optuna
 
 from fspnet.utils.utils import progress_bar
-from fspnet.utils.train_utils import train_val
-from fspnet.utils.network_utils import Network
-from fspnet.utils.data_utils import data_initialisation
+from fspnet.utils.training import train_val
+from fspnet.utils.network import Network
+from fspnet.utils.data import data_initialisation
 
 
 def _build_network(config_path: str, filters: list[int], conv_layers: list[int]):

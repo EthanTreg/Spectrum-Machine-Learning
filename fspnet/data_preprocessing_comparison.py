@@ -9,7 +9,7 @@ from xspec import Spectrum, Plot
 from matplotlib import pyplot as plt
 
 from fspnet.data_preprocessing import correct_spectrum
-from fspnet.utils.plot_utils import diff_plot, spectrum_plot
+from fspnet.utils.plots import diff_plot, spectrum_plot
 
 
 def main():

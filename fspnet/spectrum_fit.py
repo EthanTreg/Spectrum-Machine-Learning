@@ -11,11 +11,11 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 from fspnet.utils.utils import open_config
-from fspnet.utils.data_utils import data_initialisation
-from fspnet.utils.train_utils import training, pyxspec_test
-from fspnet.utils.network_utils import load_network, Network
-from fspnet.utils.saliency_utils import autoencoder_saliency, decoder_saliency
-from fspnet.utils.plot_utils import plot_initialization, plot_saliency, plot_param_distribution
+from fspnet.utils.data import data_initialisation
+from fspnet.utils.training import training, pyxspec_test
+from fspnet.utils.network import load_network, Network
+from fspnet.utils.saliency import autoencoder_saliency, decoder_saliency
+from fspnet.utils.plots import plot_initialization, plot_saliency, plot_param_distribution
 
 
 def initialization(
@@ -70,10 +70,6 @@ def initialization(
     states_dir = config['output']['network-states-directory']
     log_params = config['model']['log-parameters']
 
-    # Create folder to save network progress
-    if not os.path.exists(states_dir):
-        os.makedirs(states_dir)
-
     # Set device to GPU if available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
@@ -85,7 +81,7 @@ def initialization(
             transform = state['transform']
         except FileNotFoundError:
             log.warning(f'{states_dir}{name}_{load_num}.pth does not exist\n'
-                  f'No state will be loaded')
+                        f'No state will be loaded')
             load_num = 0
             indices = None
     else:
@@ -197,6 +193,7 @@ def main(config_path: str = '../config.yaml'):
     worker_dir = config['output']['worker-directory']
 
     # Initialize Matplotlib display parameters
+    matplotlib.use('qt5agg')
     # text_color = '#d9d9d9'
     text_color = '#222222'
     matplotlib.rcParams.update({
@@ -215,6 +212,10 @@ def main(config_path: str = '../config.yaml'):
     # Create worker directory
     if not os.path.exists(worker_dir):
         os.makedirs(worker_dir)
+
+    # Create folder to save network progress
+    if not os.path.exists(states_dir):
+        os.makedirs(states_dir)
 
     # Save worker variables
     np.save(f'{worker_dir}worker_data.npy', worker_data)

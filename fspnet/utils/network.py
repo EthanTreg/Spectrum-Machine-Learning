@@ -2,21 +2,24 @@
 Constructs a network from layers and can load weights to resume network training
 """
 import json
+import logging as log
 
 import torch
 from torch import nn, optim, Tensor
 
-from fspnet.utils import layer_utils
+from fspnet.utils import layers
 
 
 class Network(nn.Module):
     """
-    Constructs a CNN network from a configuration file
+    Constructs a neural network from a configuration file
 
     Attributes
     ----------
     encoder : boolean
         If network is an encoder
+    name : string
+        Name of the network, used for saving
     layers : list[dictionary]
         Layers with layer parameters
     network : ModuleList
@@ -48,7 +51,7 @@ class Network(nn.Module):
         learning_rate : float
             Optimizer initial learning rate
         name : string
-            Name of the network
+            Name of the network, used for saving
         config_dir : string
             Path to the network config directory
         """
@@ -151,9 +154,9 @@ def create_network(
         kwargs['module'] = nn.Sequential()
 
         try:
-            kwargs = getattr(layer_utils, layer['type'])(kwargs, layer)
+            kwargs = getattr(layers, layer['type'])(kwargs, layer)
         except AttributeError as error:
-            print(f"ERROR: Unknown layer: {layer['type']}")
+            log.error(f"Unknown layer: {layer['type']}")
             raise error
 
         module_list.append(kwargs['module'])
@@ -164,7 +167,7 @@ def create_network(
 def load_network(
         load_num: int,
         states_dir: str,
-        cnn: Network) -> tuple[int, Network, tuple[list, list]] | None:
+        network: Network) -> tuple[int, Network, tuple[list, list]] | None:
     """
     Loads the network from a previously saved state
 
@@ -176,7 +179,7 @@ def load_network(
         File number of the saved state
     states_dir : string
         Directory to the save files
-    cnn : Network
+    network : Network
         The network to append saved state to
 
     Returns
@@ -185,14 +188,14 @@ def load_network(
         The initial epoch, the updated network, optimizer
         and scheduler, and the training and validation losses
     """
-    d_state = torch.load(f'{states_dir}{cnn.name}_{load_num}.pth')
+    d_state = torch.load(f'{states_dir}{network.name}_{load_num}.pth')
 
     # Apply the saved states to the new network
     initial_epoch = d_state['epoch']
-    cnn.load_state_dict(cnn.state_dict() | d_state['state_dict'])
-    cnn.optimizer.load_state_dict(d_state['optimizer'])
-    cnn.scheduler.load_state_dict(d_state['scheduler'])
+    network.load_state_dict(network.state_dict() | d_state['state_dict'])
+    network.optimizer.load_state_dict(d_state['optimizer'])
+    network.scheduler.load_state_dict(d_state['scheduler'])
     train_loss = d_state['train_loss']
     val_loss = d_state['val_loss']
 
-    return initial_epoch, cnn, (train_loss, val_loss)
+    return initial_epoch, network, (train_loss, val_loss)

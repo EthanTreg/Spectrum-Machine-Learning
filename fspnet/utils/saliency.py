@@ -4,7 +4,7 @@ Calculates the saliency of decoders or autoencoders using backpropagation
 import torch
 from torch.utils.data import DataLoader
 
-from fspnet.utils.network_utils import Network
+from fspnet.utils.network import Network
 
 
 def autoencoder_saliency(

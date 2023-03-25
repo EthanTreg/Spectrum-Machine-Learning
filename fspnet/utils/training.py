@@ -10,7 +10,7 @@ import numpy as np
 from torch import nn
 from torch.utils.data import DataLoader
 
-from fspnet.utils.network_utils import Network
+from fspnet.utils.network import Network
 
 
 def _xspec_loss(

@@ -261,11 +261,12 @@ The following steps assumes you are using the recommended method.
 6. Repeat the same for the encoder, but with the additional argument `surrogate=decoder`
 
 **Example code**:
+
 ```python
 import yaml
 
 from fspnet.spectrum_fit import initialization
-from fspnet.utils.train_utils import training
+from fspnet.utils.training import training
 
 config_path = './config.yaml'
 
@@ -333,9 +334,10 @@ as the function `training` will still return the required outputs
 when loading from a pre-trained network.
 
 **Example code**:
+
 ```python
-from fspnet.utils.train_utils import training
-from fspnet.utils.plot_utils import plot_initialization
+from fspnet.utils.training import training
+from fspnet.utils.plots import plot_initialization
 
 # Get predictions and spectra for the decoder
 decoder_return = training(...)
@@ -354,10 +356,11 @@ There are two functions to calculate the saliency that come from `fspnet.utils.s
 The autoencoder saliency can be plotted using `plot_saliency` from `fspnet.utils.plot_utils`.
 
 **Example code**:
+
 ```python
 from fspnet.spectrum_fit import initialization
-from fspnet.utils.plot_utils import plot_saliency
-from fspnet.utils.saliency_utils import autoencoder_saliency, decoder_saliency
+from fspnet.utils.plots import plot_saliency
+from fspnet.utils.saliency import autoencoder_saliency, decoder_saliency
 
 # Initialise networks
 d_loaders, decoder = initialization(...)[2:4]
@@ -382,9 +385,10 @@ the spectrum name/number, predicted parameters and PGStat.
 The function will also return the median PGStat and predicted parameters.
 
 **Example code**:
+
 ```python
 from fspnet.spectrum_fit import initialization
-from fspnet.utils.train_utils import pyxspec_test
+from fspnet.utils.training import pyxspec_test
 
 # Initialise networks
 *_, e_loaders, encoder, device = initialization(...)

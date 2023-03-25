@@ -7,7 +7,7 @@ import multiprocessing as mp
 import numpy as np
 from numpy import ndarray
 
-from fspnet.utils.preprocessing_utils import correct_spectrum
+from fspnet.utils.preprocessing import correct_spectrum
 from fspnet.utils.utils import progress_bar, file_names, open_config
 
 

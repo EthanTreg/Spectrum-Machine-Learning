@@ -6,6 +6,7 @@
 **/*[Tt][Ee][Mm][Pp]*
 /.idea
 /.vscode
+__pycache__/
 /data/
 /plots/
 /model_states/*

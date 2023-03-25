@@ -6,15 +6,15 @@
 # Variables for training the network
 training:
   # File number to save decoder progress
-  decoder-save: 0
+  decoder-save: 3
   # File number to save encoder progress
-  encoder-save: 0
+  encoder-save: 3
   # File number to load decoder state
-  decoder-load: 1
+  decoder-load: 3
   # File number to load encoder state
-  encoder-load: 1
+  encoder-load: 0
   # Number of epochs to train for
-  epochs: 200
+  epochs: 100
   # Learning rate for training
   learning-rate: 0.0002
   # File name for decoder model to load

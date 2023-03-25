@@ -10,7 +10,7 @@ import numpy as np
 from astropy.io import fits
 
 from fspnet.utils.pyxspec_worker import initialize_pyxspec
-from fspnet.utils.preprocessing_utils import correct_spectrum
+from fspnet.utils.preprocessing import correct_spectrum
 from fspnet.utils.utils import progress_bar, file_names, open_config
 
 

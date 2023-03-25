@@ -7,7 +7,7 @@ from matplotlib.axes import Axes
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from fspnet.utils.data_utils import load_x_data
+from fspnet.utils.data import load_x_data
 
 MAJOR = 24
 MINOR = 20
@@ -176,7 +176,7 @@ def plot_initialization(
     axes = axes.flatten()
 
     # Plot reconstructions
-    for i in range(axes.size):
+    for i in range(min(axes.size, spectra.shape[0])):
         _plot_reconstructions(x_data, spectra[i], outputs[i], axes[i])
 
     plt.figtext(0.5, 0.02, 'Energy (keV)', ha='center', va='center', fontsize=MAJOR)

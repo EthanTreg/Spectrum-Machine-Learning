@@ -252,7 +252,7 @@ def correct_spectrum(
         cut_off,
     )
 
-    data.append((np.maximum(0, y_bin), uncertainty))
+    data.append((y_bin, uncertainty))
     scaling = np.random.uniform(0.5, 2, aug_count)
 
     # Randomly scale background for augmentation
