@@ -7,7 +7,7 @@ from numpy import ndarray
 from torch import nn, Tensor
 from torch.utils.data import Dataset, DataLoader, Subset
 
-from fspnet.utils.utils import even_length
+from fspnet.utils.utils import even_length, data_normalization
 
 
 class SpectrumDataset(Dataset):
@@ -41,6 +41,7 @@ class SpectrumDataset(Dataset):
             data_file: str,
             params_path: str,
             log_params: list[int],
+            names_path: str = None,
             transform: list[tuple[ndarray, ndarray]] = None):
         """
         Parameters
@@ -51,19 +52,15 @@ class SpectrumDataset(Dataset):
             Path to the labels file, if none, then an unsupervised approach is used
         log_params : list[int]
             Index of each free parameter in logarithmic space
+        names_path : string, default = None
+            Path to the names of the spectra, if none, index value will be used
         transform : list[tuple[ndarray, ndarray]], default = None
             Min and max spectral range and mean & standard deviation of parameters
             used for transformation after log
         """
         self.indices = None
         self.log_params = log_params
-        data = np.load(data_file)
-
-        if len(data.shape) == 3:
-            self.spectra, self.uncertainty = np.rollaxis(np.load(data_file), 1)
-        else:
-            self.spectra = np.load(data_file)
-            self.uncertainty = np.empty_like(self.spectra)
+        self.spectra, self.uncertainty = np.rollaxis(np.load(data_file), 1)
 
         if transform:
             spectra_transform, params_transform = transform
@@ -80,7 +77,7 @@ class SpectrumDataset(Dataset):
         # Transform spectra & uncertainty
         self.uncertainty = np.log10(1 + self.uncertainty / self.spectra)
         self.spectra = np.log10(self.spectra)
-        self.spectra, spectra_transform = self._data_normalization(
+        self.spectra, spectra_transform = data_normalization(
             self.spectra,
             mean=False,
             transform=spectra_transform,
@@ -99,18 +96,18 @@ class SpectrumDataset(Dataset):
             return
 
         # Load spectra parameters and names
-        if '.npy' in params_path:
-            self.params = np.load(params_path)
-            self.names = np.arange(self.spectra.size(0))
+        self.params = np.load(params_path)
+
+        if names_path:
+            self.names = np.load(names_path)
         else:
-            labels = np.loadtxt(params_path, skiprows=6, dtype=str)
-            self.params = labels[:, 9:].astype(float)
-            self.names = labels[:, 6]
+            self.names = np.arange(self.spectra.size(0))
 
         # Transform parameters
         self.params[:, log_params] = np.log10(self.params[:, log_params])
-        self.params, params_transform = self._data_normalization(
+        self.params, params_transform = data_normalization(
             self.params,
+            axis=0,
             transform=params_transform,
         )
         self.params = torch.from_numpy(self.params).float()
@@ -160,41 +157,6 @@ class SpectrumDataset(Dataset):
         )
 
         return np.swapaxes(np.maximum(data, min_count), 0, 1)
-
-    def _data_normalization(
-            self,
-            data: ndarray,
-            mean: bool = True,
-            transform: tuple[float, float] = None) -> tuple[ndarray, tuple[float, float]]:
-        """
-        Transforms data either by normalising or
-        scaling between 0 & 1 depending on if mean is true or false.
-
-        Parameters
-        ----------
-        data : ndarray
-            Data to be normalised
-        mean : bool, default = True
-            If data should be normalised or scaled between 0 and 1
-        transform: tuple[float, float], default = None
-            If transformation values exist already
-
-        Returns
-        -------
-        tuple[ndarray, tuple[float, float]]
-            Transformed data & transform values
-        """
-        if mean and not transform:
-            transform = [np.mean(data, axis=0), np.std(data, axis=0)]
-        elif not mean and not transform:
-            transform = [
-                np.min(data),
-                np.max(data) - np.min(data)
-            ]
-
-        data = (data - transform[0]) / transform[1]
-
-        return data, transform
 
     def downscaler(self, downscales: int):
         """
@@ -249,6 +211,7 @@ def data_initialisation(
         log_params: list,
         kwargs: dict,
         val_frac: float = 0.1,
+        names_path: str = None,
         transform: list[list[ndarray]] = None,
         indices: ndarray = None) -> tuple[DataLoader, DataLoader]:
     """
@@ -266,6 +229,8 @@ def data_initialisation(
         Keyword arguments for dataloader
     val_frac : float, default = 0.1
         Fraction of validation data
+    names_path : string, default = None
+        Path to the names of the spectra, if none, index value will be used
     transform : list[ndarray], default = None
         Min and max spectral range and mean & standard deviation of parameters
     indices : ndarray, default = None
@@ -279,7 +244,13 @@ def data_initialisation(
     batch_size = 120
 
     # Fetch dataset & create train & val data
-    dataset = SpectrumDataset(spectra_path, params_path, log_params, transform=transform)
+    dataset = SpectrumDataset(
+        spectra_path,
+        params_path,
+        log_params,
+        names_path=names_path,
+        transform=transform,
+    )
     val_amount = max(int(len(dataset) * val_frac), 1)
 
     # If network hasn't trained on data yet, randomly separate training and validation

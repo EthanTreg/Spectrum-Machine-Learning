@@ -90,9 +90,9 @@ def pyxspec_test(
         job_name: str = None,
         defaults: torch.Tensor = None,
         device: torch.device = None,
-        encoder: Network = None) -> tuple[float, np.ndarray]:
+        encoder: Network = None):
     """
-    If encoder is provided, creates predictions for each spectra, otherwise, uses true parameters
+    If encoder is provided, creates predictions for each spectrum, otherwise, uses true parameters
     then calculates loss
 
     Parameters
@@ -109,11 +109,6 @@ def pyxspec_test(
         Which device type PyTorch should use, not needed if encoder is None
     encoder : Network, default = None
         Encoder to predict parameters, if None, true parameters will be used
-
-    Returns
-    -------
-    tuple[float, Tensor]
-        Average loss value and parameters
     """
     # Initialize variables
     initial_time = time()
@@ -121,7 +116,6 @@ def pyxspec_test(
     params = []
     log_params = loader.dataset.dataset.log_params
     param_transform = loader.dataset.dataset.transform[1]
-
 
     if encoder:
         encoder.eval()
@@ -150,7 +144,8 @@ def pyxspec_test(
     params = torch.cat(params)
     print(f'Parameter retrieval time: {time() - initial_time:.3e} s')
 
-    return _xspec_loss(worker_dir, names, params.numpy(), job_name=job_name), params.numpy()
+    loss = _xspec_loss(worker_dir, names, params.numpy(), job_name=job_name)
+    print(f'Reduced PGStat Loss: {loss:.3e}')
 
 
 def train_val(
@@ -227,12 +222,12 @@ def train_val(
 
 def training(
         epochs: tuple[int, int],
-        losses: tuple[list, list],
         loaders: tuple[DataLoader, DataLoader],
         cnn: Network,
         device: torch.device,
         save_num: int = 0,
         states_dir: str = None,
+        losses: tuple[list, list] = None,
         surrogate: Network = None) -> tuple[tuple[list, list], np.ndarray, np.ndarray]:
     """
     Trains & validates the network for each epoch
@@ -241,8 +236,6 @@ def training(
     ----------
     epochs : tuple[integer, integer]
         Initial epoch & number of epochs to train
-    losses : tuple[list, list]
-        Train and validation losses for each epoch
     loaders : tuple[DataLoader, DataLoader]
         Train and validation dataloaders
     cnn : Network
@@ -253,6 +246,8 @@ def training(
         The file number to save the new state, if 0, nothing will be saved
     states_dir : string, default = None
         Path to the folder where the network state will be saved, not needed if save_num = 0
+    losses : tuple[list, list], default = ([], [])
+        Train and validation losses for each epoch, can be empty
     surrogate : Network, default = None
         Surrogate network to use for training
 
@@ -261,6 +256,9 @@ def training(
     tuple[tuple[list, list], ndarray, ndarray]
         Train & validation losses, spectra & reconstructions
     """
+    if not losses:
+        losses = ([], [])
+
     # Train for each epoch
     for epoch in range(*epochs):
         t_initial = time()

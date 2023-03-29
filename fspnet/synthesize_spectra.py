@@ -3,7 +3,6 @@ Generates synthetic data using PyXspec
 """
 import os
 from time import time
-import logging as log
 
 import xspec
 import numpy as np
@@ -248,7 +247,7 @@ def main(config_path: str = '../config.yaml'):
     total_synth_num = config['synthesize']['synthetic-number']
     synth_num = config['synthesize']['spectra-per-batch']
     data_dir = config['data']['spectra-directory']
-    labels_path = config['data']['spectra-names-file']
+    names_path = config['data']['names-path']
     synth_dir = config['output']['synthetic-directory']
     synth_data = config['output']['synthetic-data']
 
@@ -264,13 +263,8 @@ def main(config_path: str = '../config.yaml'):
     blacklist = ['bkg', '.bg', '.rmf', '.arf']
 
     # Get spectra file names to randomly sample
-    if labels_path:
-        try:
-            spectra_names = np.loadtxt(labels_path, skiprows=6, usecols=6, dtype=str)
-        except FileNotFoundError:
-            log.warning(f'{labels_path} does not exist\n'
-                        f'File names from {data_dir} will be used instead')
-            spectra_names = file_names(data_dir, blacklist=blacklist)
+    if names_path:
+        spectra_names = np.load(names_path)
     else:
         spectra_names = file_names(data_dir, blacklist=blacklist)
 

@@ -5,15 +5,15 @@ import os
 import json
 import logging as log
 
-import yaml
 import torch
 import joblib
 import optuna
+from torch.utils.data import DataLoader
 
-from fspnet.utils.utils import progress_bar
-from fspnet.utils.training import train_val
 from fspnet.utils.network import Network
+from fspnet.utils.training import train_val
 from fspnet.utils.data import data_initialisation
+from fspnet.utils.utils import progress_bar, open_config
 
 
 def _build_network(config_path: str, filters: list[int], conv_layers: list[int]):
@@ -67,8 +67,8 @@ def _build_network(config_path: str, filters: list[int], conv_layers: list[int])
 
 def _objective(
         trial: optuna.trial.Trial,
-        config_path: str,
         loaders: tuple,
+        config: dict,
         device: torch.device) -> float:
     """
     Objective function that trials parameters to optimize hyperparameters
@@ -77,10 +77,10 @@ def _objective(
     ----------
     trial : Trial
         Optuna trial object
-    config_path : string
-        File path to the configuration file
     loaders : tuple
         Train dataloader and validation dataloader
+    config : dictionary
+        Configuration dictionary
     device : device
         Which device type PyTorch should use
 
@@ -89,9 +89,6 @@ def _objective(
     float
         Final validation loss of the trial network
     """
-    with open(config_path, 'r', encoding='utf-8') as file:
-        config = list(yaml.safe_load_all(file))[3]
-
     # Variables
     epochs = config['optimization']['epochs']
     network_name = config['optimization']['name']
@@ -143,39 +140,35 @@ def _objective(
     return loss
 
 
-def main():
+def optimize_network(
+        config: dict,
+        loaders: tuple[DataLoader, DataLoader],
+        device: torch.device) -> dict:
     """
-    Main function for optimizing networks
+    Optimizes the hyperparameters of the network using Optuna and plots the results
+
+    Parameters
+    ----------
+    config : dictionary
+        Configuration dictionary
+    loaders : tuple[DataLoader, DataLoader]
+        Train and validation dataloaders
+    device : device
+        Which device type PyTorch should use
+
+    Returns
+    -------
+    dictionary
+        Best trial hyperparameters
     """
     # Constants
     initial = 0
-    config_path = '../config.yaml'
-
-    with open(config_path, 'r', encoding='utf-8') as file:
-        config = list(yaml.safe_load_all(file))[3]
-
-    # Variables
     load = config['optimization']['load']
     save = config['optimization']['save']
     num_trials = config['optimization']['trials']
-    min_trials = config['optimization']['pruning-minimum-trials']
     network_name = config['optimization']['name']
-    spectra_path = config['data']['spectra-path']
-    params_path = config['data']['parameters-path']
+    min_trials = config['optimization']['pruning-minimum-trials']
     model_dir = config['output']['network-states-directory']
-    log_params = config['optimization']['log-parameters']
-
-    # Set device to GPU if available
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
-
-    # Initialize datasets
-    loaders = data_initialisation(
-        spectra_path,
-        params_path,
-        log_params,
-        kwargs,
-    )
 
     # Start trials
     pruner = optuna.pruners.PatientPruner(
@@ -201,7 +194,7 @@ def main():
 
     # Train network for each trial
     for i in range(initial, num_trials):
-        study.optimize(lambda x: _objective(x, config_path, loaders, device), n_trials=1)
+        study.optimize(lambda x: _objective(x, loaders, config, device), n_trials=1)
 
         if save:
             state = {'trial': i, 'study': study, 'pruner': pruner}
@@ -215,6 +208,38 @@ def main():
         study,
         params=['learning_rate', 'filters_1', 'filters_2', 'conv_layers_1', 'conv_layers_2']
     ).show()
+
+    return study.best_params
+
+
+def main(config_path: str = './config.yaml'):
+    """
+    Main function for optimizing networks
+
+    Parameters
+    ----------
+    config_path : string, default = '../config.yaml'
+        File path to the configuration file
+    """
+    # Constants
+    _, config = open_config(3, config_path=config_path)
+    spectra_path = config['data']['spectra-path']
+    params_path = config['data']['parameters-path']
+    log_params = config['optimization']['log-parameters']
+
+    # Set device to GPU if available
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
+
+    # Initialize datasets
+    loaders = data_initialisation(
+        spectra_path,
+        params_path,
+        log_params,
+        kwargs,
+    )
+
+    optimize_network(config, loaders, device)
 
 
 if __name__ == '__main__':

@@ -165,7 +165,8 @@ def linear(kwargs: dict, layer: dict) -> dict:
         dimension list (dims) & sequential module (module).
         Must contain output_size if layer uses factor rather than features
     layer : dictionary
-        Must contain either factor of output size or features
+        Must contain either factor of output size or features.
+        Can contain dropout (dropout) if dropout is to be used, else dropout is not used
 
     Returns
     -------

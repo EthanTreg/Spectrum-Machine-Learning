@@ -71,13 +71,14 @@ def preprocess(config_path: str = '../config.yaml'):
         File path to the configuration file
     """
     # If run by command line, optional argument can be used
-    config_path, config = open_config(1, config_path)
+    _, config = open_config(1, config_path)
 
     # Initialize variables
     aug_count = config['augmentation']['augmentation_number']
     data_dir = config['data']['spectra-directory']
     background_dir = config['data']['background-directory']
     params_path = config['data']['parameters-path']
+    names_path = config['data']['names-path']
     processed_path = config['output']['processed-path']
 
     # Constants
@@ -89,16 +90,14 @@ def preprocess(config_path: str = '../config.yaml'):
     counter = mp.Value('i', 0)
     queue = mp.Queue()
 
-    # Fetch spectra names & labels
-    if '.npy' in params_path:
-        spectra_files = np.char.add(data_dir, file_names(data_dir, blacklist=blacklist))
-        params = np.load(params_path)
-    elif params_path:
-        labels = np.loadtxt(params_path, skiprows=6, dtype=str)
-        spectra_files = np.char.add(data_dir, labels[:, 6])
-        params = labels[:, 9:].astype(float)
+    # Fetch spectra names and parameters
+    if names_path:
+        spectra_files = np.char.add(data_dir, np.load(names_path))
     else:
         spectra_files = np.char.add(data_dir, file_names(data_dir, blacklist=blacklist))
+
+    if params_path:
+        params = np.load(params_path)
 
     # Duplicate parameters if provided and augmentation is used
     if aug_count and params:

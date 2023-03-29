@@ -69,7 +69,6 @@ class PyXspecFitting:
             model_dir=model_dir
         )
 
-
         self.model(2).values = [*self.model(2).values[:5], 4.5]
 
         # Generate parameter limits
@@ -84,7 +83,10 @@ class PyXspecFitting:
 
     def _fit_statistic(self, params: np.ndarray) -> float:
         """
-        Forward function of PyXspec loss
+        Measures the quality of fit for the given parameters
+
+        If optimize is true, then several of iterations of fitting will be performed
+
         Parameters
         ----------
         params : ndarray
@@ -93,7 +95,7 @@ class PyXspecFitting:
         Returns
         -------
         float
-            Loss value
+            PGStat loss divided by the degrees of freedom
         """
         # Merge fixed & free parameters
         params = np.insert(params, self.fix_params_index, self.fix_params[:, 1])
@@ -115,7 +117,7 @@ class PyXspecFitting:
                     self.model.setPars(params.tolist())
 
         # Calculate fit statistic loss
-        return xspec.Fit.statistic
+        return xspec.Fit.statistic / xspec.Fit.dof
 
     def fit_loss(
             self,

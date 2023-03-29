@@ -2,7 +2,7 @@
 Misc functions used elsewhere
 """
 import os
-import argparse
+from argparse import ArgumentParser
 
 import yaml
 import torch
@@ -58,6 +58,48 @@ def even_length(x: torch.Tensor) -> torch.Tensor:
     return x
 
 
+def data_normalization(
+        data: np.ndarray,
+        mean: bool = True,
+        axis: int = None,
+        transform: tuple[float, float] = None) -> tuple[np.ndarray, tuple[float, float]]:
+    """
+    Transforms data either by normalising or
+    scaling between 0 & 1 depending on if mean is true or false.
+
+    Parameters
+    ----------
+    data : ndarray
+        Data to be normalised
+    mean : boolean, default = True
+        If data should be normalised or scaled between 0 and 1
+    axis : integer, default = None
+        Which axis to normalise over, if none, normalise over all axes
+    transform: tuple[float, float], default = None
+        If transformation values exist already
+
+    Returns
+    -------
+    tuple[ndarray, tuple[float, float]]
+        Transformed data & transform values
+    """
+    if mean and not transform:
+        transform = [np.mean(data, axis=axis), np.std(data, axis=axis)]
+    elif not mean and not transform:
+        transform = [
+            np.min(data, axis=axis),
+            np.max(data, axis=axis) - np.min(data, axis=axis)
+        ]
+
+    if len(transform[0].shape):
+        data = (data - np.expand_dims(transform[0], axis=axis)) /\
+               np.expand_dims(transform[1], axis=axis)
+    else:
+        data = (data - transform[0]) / transform[1]
+
+    return data, transform
+
+
 def file_names(data_dir: str, blacklist: list[str] = None, whitelist: str = None) -> np.ndarray:
     """
     Fetches the file names of all spectra that are in the whitelist, if not None,
@@ -91,7 +133,7 @@ def file_names(data_dir: str, blacklist: list[str] = None, whitelist: str = None
     return files
 
 
-def open_config(idx: int, config_path: str) -> tuple[str, dict]:
+def open_config(idx: int, config_path: str, parser: ArgumentParser = None) -> tuple[str, dict]:
     """
     Opens the configuration file from either the provided path or through command line argument
 
@@ -101,14 +143,23 @@ def open_config(idx: int, config_path: str) -> tuple[str, dict]:
         Index of the configuration file
     config_path : string
         Default path to the configuration file
+    parser : ArgumentParser, default = None
+        Parser if arguments other than config path are required
 
     Returns
     -------
     tuple[string, dictionary]
         Configuration path and configuration file dictionary
     """
-    parser = argparse.ArgumentParser()
-    parser.add_argument('config_path', nargs='?', default=config_path)
+    if not parser:
+        parser = ArgumentParser()
+
+    parser.add_argument(
+        '--config_path',
+        default=config_path,
+        help='Path to the configuration file',
+        required=False,
+    )
     args = parser.parse_args()
     config_path = args.config_path
 

@@ -3,11 +3,13 @@ Creates several plots
 """
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy import ndarray
 from matplotlib.axes import Axes
-from torch import Tensor
 from torch.utils.data import DataLoader
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from fspnet.utils.data import load_x_data
+from fspnet.utils.utils import data_normalization
 
 MAJOR = 24
 MINOR = 20
@@ -42,12 +44,12 @@ def _plot_loss(train_loss: list, val_loss: list):
 
 
 def _plot_reconstructions(
-        x_data: np.ndarray,
-        y_data: np.ndarray,
-        y_recon: np.ndarray,
-        axes: Axes):
+        x_data: ndarray,
+        y_data: ndarray,
+        y_recon: ndarray,
+        axis: Axes) -> Axes:
     """
-    Plots reconstructions for a given epoch
+    Plots reconstructions and residuals
 
     Parameters
     ----------
@@ -57,16 +59,32 @@ def _plot_reconstructions(
         Spectrum
     y_recon : ndarray
         Reconstructed Spectrum
-    axes : Axes
+    axis : Axes
         Plot axes
+
+    Returns
+    -------
+    Axes
+        Spectrum axis
     """
-    axes.scatter(x_data, y_data, label='Spectrum')
-    axes.scatter(x_data, y_recon, label='Reconstruction')
-    axes.locator_params(axis='y', nbins=5)
-    axes.tick_params(axis='both', labelsize=MINOR)
+    axis.scatter(x_data, y_recon - y_data, marker='x', label='Residual')
+    axis.locator_params(axis='y', nbins=3)
+    axis.tick_params(axis='both', labelsize=MINOR)
+    axis.hlines(0, xmin=np.min(x_data), xmax=np.max(x_data), color='k')
+
+    divider = make_axes_locatable(axis)
+    axis_2 = divider.append_axes('top', size='150%', pad=0)
+
+    axis_2.scatter(x_data, y_data, label='Spectrum')
+    axis_2.scatter(x_data, y_recon, label='Reconstruction')
+    axis_2.locator_params(axis='y', nbins=5)
+    axis_2.tick_params(axis='y', labelsize=MINOR)
+    axis_2.set_xticks([])
+
+    return axis_2
 
 
-def _plot_histogram(title: str, data: np.ndarray, data_twin: np.ndarray, axis: Axes) -> Axes:
+def _plot_histogram(title: str, data: ndarray, data_twin: ndarray, axis: Axes) -> Axes:
     """
     Plots a histogram subplot with twin data
 
@@ -89,13 +107,13 @@ def _plot_histogram(title: str, data: np.ndarray, data_twin: np.ndarray, axis: A
     twin_axis = axis.twinx()
 
     axis.set_title(title, fontsize=MAJOR)
-    axis.hist(data, bins=100, alpha=0.5, density=True, label='Real')
+    axis.hist(data, bins=100, alpha=0.5, density=True, label='Target')
     twin_axis.hist(data_twin, bins=100, alpha=0.5, density=True, label='Predicted', color='orange')
 
     return twin_axis
 
 
-def plot_saliency(plots_dir: str, spectra: Tensor, prediction: Tensor, saliency: Tensor):
+def plot_saliency(plots_dir: str, spectra: ndarray, predictions: ndarray, saliencies: ndarray):
     """
     Plots saliency map for the autoencoder
 
@@ -105,12 +123,17 @@ def plot_saliency(plots_dir: str, spectra: Tensor, prediction: Tensor, saliency:
         Directory to save plots
     spectra : Tensor
         Target spectra
-    prediction : Tensor
-        Predicted spectra
-    saliency : Tensor
+    saliencies : Tensor
         Saliency
     """
-    x_data = load_x_data(spectra.size(1))
+    # Constants
+    alpha = 0.8
+    cmap = plt.cm.hot
+    x_data = load_x_data(spectra.shape[1])
+
+    x_regions = x_data[::12]
+    saliencies = np.mean(saliencies.reshape(saliencies.shape[0], -1, 12), axis=-1)
+    saliencies = data_normalization(saliencies, mean=False, axis=1)[0] * 0.9 + 0.05
 
     # Initialize e_saliency plots
     _, axes = plt.subplots(
@@ -123,9 +146,19 @@ def plot_saliency(plots_dir: str, spectra: Tensor, prediction: Tensor, saliency:
     axes = axes.flatten()
 
     # Plot each saliency map
-    for i, axis in enumerate(axes):
-        axis.scatter(x_data, prediction[i], label='Prediction')
-        axis.scatter(x_data, spectra[i], c=saliency[i], cmap=plt.cm.hot, label='Target')
+    for i, (
+            axis,
+            spectrum,
+            prediction,
+            saliency
+    ) in enumerate(zip(axes, spectra, predictions, saliencies)):
+        for j, (x_region, saliency_region) in enumerate(zip(x_regions[:-1], saliency[:-1])):
+            axis.axvspan(x_region, x_regions[j + 1], color=cmap(saliency_region), alpha=alpha)
+
+        axis.axvspan(x_regions[-1], x_data[-1], color=cmap(saliency[-1]), alpha=alpha)
+
+        axis.scatter(x_data, spectrum, label='Target')
+        axis.scatter(x_data, prediction, color='g', label='Prediction')
         axis.text(0.9, 0.9, i + 1, fontsize=MAJOR, transform=axis.transAxes)
         axis.tick_params(left=False, labelleft=False, labelbottom=False, bottom=False)
 
@@ -138,7 +171,6 @@ def plot_saliency(plots_dir: str, spectra: Tensor, prediction: Tensor, saliency:
         columnspacing=10,
     )
     legend.get_frame().set_alpha(None)
-    legend.legendHandles[1].set_color('orange')
 
     plt.figtext(0.5, 0.02, 'Energy (keV)', ha='center', va='center', fontsize=MAJOR)
 
@@ -146,12 +178,46 @@ def plot_saliency(plots_dir: str, spectra: Tensor, prediction: Tensor, saliency:
     plt.savefig(f'{plots_dir}Saliency_Plot.png', transparent=False)
 
 
-def plot_initialization(
+def plot_param_comparison(
+        plots_dir: str,
+        param_names: list[str],
+        target: ndarray,
+        predictions: ndarray):
+    """
+    Plots predictions against target for each parameter
+
+    Parameters:
+    ----------
+    plots_dir : string
+        Directory to save plots
+    param_names : list[string]
+        List of parameter names
+    target : ndarray
+        Target parameters
+    predictions : ndarray
+        Parameter predictions
+    """
+    _, axes = plt.subplot_mosaic('AABBCC;DDDEEE', constrained_layout=True, figsize=(16, 9))
+
+    # Plot each parameter
+    for i, axis in enumerate(axes.values()):
+        value_range = [
+            min(np.min(target[:, i]), np.min(predictions[:, i])),
+            max(np.max(target[:, i]), np.max(predictions[:, i]))
+        ]
+        axis.scatter(target[:, i], predictions[:, i], alpha=0.8)
+        axis.plot(value_range, value_range, color='k')
+        axis.set_title(param_names[i])
+
+    plt.savefig(f'{plots_dir}Parameter_Comparison.png', transparent=False)
+
+
+def plot_training(
     prefix: str,
     plots_dir: str,
     losses: tuple[list, list],
-    spectra: np.ndarray,
-    outputs: np.ndarray
+    spectra: ndarray,
+    outputs: ndarray
 ):
     """
     Initializes & plots reconstruction & loss plots
@@ -172,12 +238,20 @@ def plot_initialization(
     x_data = load_x_data(spectra.shape[-1])
 
     # Initialize reconstructions plots
-    _, axes = plt.subplots(4, 4, figsize=(24, 12), sharex='col', gridspec_kw={'hspace': 0})
+    _, axes = plt.subplots(2, 2, figsize=(24, 12), sharex='col', gridspec_kw={
+        'top': 0.92,
+        'bottom': 0.07,
+        'left': 0.08,
+        'right': 0.99,
+        'hspace': 0.05,
+        'wspace': 0.15,
+    })
+
     axes = axes.flatten()
 
     # Plot reconstructions
-    for i in range(min(axes.size, spectra.shape[0])):
-        _plot_reconstructions(x_data, spectra[i], outputs[i], axes[i])
+    for spectrum, output, axis in zip(spectra, outputs, axes):
+        main_axis = _plot_reconstructions(x_data, spectrum, output, axis)
 
     plt.figtext(0.5, 0.02, 'Energy (keV)', ha='center', va='center', fontsize=MAJOR)
     plt.figtext(
@@ -190,29 +264,29 @@ def plot_initialization(
         fontsize=MAJOR,
     )
 
+    labels = np.hstack((main_axis.get_legend_handles_labels(), axes[0].get_legend_handles_labels()))
     legend = plt.figlegend(
-        *axes[0].get_legend_handles_labels(),
+        *labels,
         loc='lower center',
-        ncol=2,
-        bbox_to_anchor=(0.5, 0.94),
+        ncol=3,
+        bbox_to_anchor=(0.5, 0.92),
         fontsize=MAJOR,
         markerscale=2,
         columnspacing=10,
     )
     legend.get_frame().set_alpha(None)
 
-    plt.tight_layout(rect=[0.03, 0.03, 1, 0.95])
-    plt.savefig(f'{plots_dir}{prefix} Reconstructions.png', transparent=False)
+    plt.savefig(f'{plots_dir}{prefix}_Reconstructions.png', transparent=False)
 
     # Plot loss over epochs
     _plot_loss(losses[0], losses[1])
-    plt.savefig(f'{plots_dir}{prefix} Loss.png', transparent=False)
+    plt.savefig(f'{plots_dir}{prefix}_Loss.png', transparent=False)
 
 
 def plot_param_distribution(
         plots_dir: str,
         param_names: list[str],
-        params: np.ndarray,
+        params: ndarray,
         loader: DataLoader):
     """
     Plots histogram of each parameter for both true and predicted
@@ -233,7 +307,7 @@ def plot_param_distribution(
     params_real = loader.dataset.dataset.params.cpu().numpy()
     # param_names = ['nH', r'$\Gamma', 'FracSctr', r'$T_{max}$', 'Norm']
 
-    _, axes = plt.subplot_mosaic('AABBCC;DDDEEE', figsize=(32, 18))
+    _, axes = plt.subplot_mosaic('AABBCC;DDDEEE', figsize=(16, 9))
 
     params[:, log_params] = np.log10(params[:, log_params])
     params = list(np.rollaxis(params, axis=1))
@@ -255,11 +329,11 @@ def plot_param_distribution(
     plt.savefig(f'{plots_dir}Param_Distribution')
 
 
-def diff_plot(
-        x_data_1: np.ndarray,
-        y_data_1: np.ndarray,
-        x_data_2: np.ndarray,
-        y_data_2: np.ndarray):
+def plot_difference(
+        x_data_1: ndarray,
+        y_data_1: ndarray,
+        x_data_2: ndarray,
+        y_data_2: ndarray):
     """
     Plots the ratio between two data sets (set 1 / set 2)
 
@@ -281,19 +355,19 @@ def diff_plot(
 
     diff = y_data_1 / y_data_2[matching_indices]
 
-    plt.title('PyXspec compared to fits', fontsize=24)
+    plt.title('PyXspec compared to fits', fontsize=MAJOR)
     plt.scatter(x_data_1, diff)
-    plt.xlabel('Energy (keV)', fontsize=20)
-    plt.ylabel('PyXspec / fits data', fontsize=20)
+    plt.xlabel('Energy (keV)', fontsize=MINOR)
+    plt.ylabel('PyXspec / fits data', fontsize=MINOR)
     plt.text(
         0.05,
         0.2,
         f'Average ratio: {round(np.mean(diff), 3)}',
-        fontsize=16, transform=plt.gca().transAxes
+        fontsize=MINOR, transform=plt.gca().transAxes
     )
 
 
-def spectrum_plot(x_bin: np.ndarray, y_bin: np.ndarray, x_px: np.ndarray, y_px: np.ndarray):
+def plot_spectrum(x_bin: ndarray, y_bin: ndarray, x_px: ndarray, y_px: ndarray):
     """
     Plots the spectrum of PyXspec & fits data
 
@@ -308,12 +382,12 @@ def spectrum_plot(x_bin: np.ndarray, y_bin: np.ndarray, x_px: np.ndarray, y_px: 
     y_px : ndarray
         y data from PyXspec
     """
-    plt.title('Spectrum of PyXspec & fits', fontsize=24)
-    plt.xlabel('Energy (keV)', fontsize=20)
-    plt.ylabel(r'Counts $s^{-1}$ $detector^{-1}$ $keV^{-1}$', fontsize=20)
+    plt.title('Spectrum of PyXspec & fits', fontsize=MAJOR)
+    plt.xlabel('Energy (keV)', fontsize=MINOR)
+    plt.ylabel(r'Counts $s^{-1}$ $detector^{-1}$ $keV^{-1}$', fontsize=MINOR)
     plt.scatter(x_bin, y_bin, label='Fits data', marker='x')
     plt.scatter(x_px, y_px, label='PyXspec data')
     plt.xlim([0.15, 14.5])
     plt.xscale('log')
     plt.yscale('log')
-    plt.legend(fontsize=20)
+    plt.legend(fontsize=MINOR)

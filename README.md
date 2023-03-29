@@ -17,10 +17,12 @@
     * [**3.2 Training the Autoencoder**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#32-training-the-autoencoder)
       * [**3.2.1 Generating Synthetic Data**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#321-generating-synthetic-data)
       * [**3.2.2 Training the Autoencoder**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#322-training-the-autoencoder)
+    * [**3.3 Running Scripts via Command Line**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#33-running-scripts-via-command-line)
 * [**4 Analysis Tools**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#4-analysis-tools)
     * [**4.1 Plotting Reconstructions and Loss per Epoch**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#41-plotting-reconstructions-and-loss-per-epoch)
-    * [**4.2 Calculating & Plotting the Saliency**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#42-calculating-&-plotting-the-saliency)
-    * [**4.3 Getting the PGStatistics of the Encoder**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#43-getting-the-pgstatistics-of-the-encoder)
+    * [**4.2 Comparing Parameter Predictions Against Fitted Parameters**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#42-comparing-parameter-predictions-against-fitted-parameters)
+    * [**4.3 Calculating & Plotting the Saliency**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#43-calculating-&-plotting-the-saliency)
+    * [**4.4 Getting the PGStatistics of the Encoder**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#44-getting-the-pgstatistics-of-the-encoder)
 * [**5 Modifying the Network**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#5-modifying-the-network)
     * [**5.1 Manually Configuring the Network**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#51-manually-configuring-the-network)
     * [**5.2 Optimising Hyperparameters using Optuna**](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#52-optimising-hyperparameters-using-optuna)
@@ -94,7 +96,7 @@ Therefore, weights are provided if this is the desired model for parameter predi
 
 To generate parameters on a dataset, first make sure that data has been **properly preprocessed**.  
 * The network is designed for an input spectrum of **size 240**.  
-* All spectra **must be saved** as a `.npy` file of **dimensions** $n\times2\times240$,
+* All spectra **must be saved** as a `.npy` file of **dimensions** $n \times 2 \times 240$,
   where the second dimension corresponds to the spectrum and the uncertainty.  
 * The network is designed for the data to be **pre-normalised**;
   however, the network may still perform well or require retraining, pre-processing follows:
@@ -129,7 +131,7 @@ To configure the network, first check the settings under the first section
 * `training` options:
   * `encoder-load`: 1
   * `encoder-name`: 'Encoder V3'
-  * `network-configs-directory`: '../network_configs/',
+  * `network-configs-directory`: `'../network_configs/'`,
     make sure this directory exists/is correct and contains the file `Encoder V3.json`
 * `data` options:
   * `encoder-data-path`: _path to your data file
@@ -169,17 +171,22 @@ Synthetic spectra is generated using Xspec with the model that you want to fit.
 This can be done independently; however, the data needs to meet the requirements as mentioned in
 [Data Requirements](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#311-data-requirements).  
 Alternatively, the script `synthesize_spectra.py` can be used to generate the spectra for you.  
+
 **WARNING**: due to string character limits in fits files, if any paths are too long,
-they will get truncated, preventing files from being opened correctly.
+they will get truncated, preventing files from being opened correctly.  
+**WARNING**: Script can freeze mid-way through generating spectra, currently the cause is unknown.
+If this happens, delete all files that were created from that batch, and resume progress.
+To make finding the files to delete easier,
+set the `synthetic-number` to a power of 10 as the data to delete won't begin with a 0.
 
 1. Configure settings in `synthesize_spectra.py config file`:
    * `synthesize` options:
      * `synthetic-number`: _recommended 100,000_, the more, the better, but the slower the training
-     * `spectra-per-batch`: _recommended 100_, program can freeze,
+     * `spectra-per-batch`: _recommended 100_, script can freeze,
        resulting in loss of progress for the current batch
    * `data` options:
      * `spectra-directory`: _real spectra fits files path_
-     * `spectra-names-file`: _spectra names file path_, not required,
+     * `names-path`: _spectra names file path_, not required,
        leave empty if this doesn't exist
    * `model`:
      * `model-name`: _Xspec name of the model_
@@ -206,7 +213,7 @@ There are two methods to train the autoencoder:
   however, this makes it slower and more configuration settings are required,
   this is **not recommended**
 * Import `from fspnet.spectrum_fit import initialization;
-  from fspnet.utils.train_utils import training`:
+  from fspnet.utils.training import training; from fspnet.utils.utils import open_config`:
   More control, can be implemented into existing code, and will be faster, this is **recommended**
 
 The following steps assumes you are using the recommended method.
@@ -218,7 +225,7 @@ The following steps assumes you are using the recommended method.
       * `decoder-load`: 0
       * `encoder-load`: 0
       * `epochs`: _recommended 200_, more is better, but takes longer and has diminishing returns
-      * `network-configs-directory`: '../network_configs/',
+      * `network-configs-directory`: `'../network_configs/'`,
       make sure this directory exists/is correct and contains the file `Encoder V3.json`
     * `data` options:
       * `decoder-data-path`: _synthetic spectra file path_
@@ -237,42 +244,39 @@ The following steps assumes you are using the recommended method.
       * `fix-parameters`: _2D list of index-value pairs with indices **starting from 1**_
     * `output` options:
       * `network-states-directory`: _path to save network training progress_
-2. Load `config.yaml` using `list(yaml.safe_load_all(file))[0]`,
-   where file is the opened `config.yaml` file,
-   and retrieve:
+2. Load `config.yaml` by calling `open_config` with the parameters _idx_ and _config_path_,
+   this will return the configuration path (not needed) and dictionary (`config`), 
+3. Retrieve the following variables from `config`:
     * `epochs = config['training']['epochs']`
     * `d_save_num = config['training']['decoder-save']`
     * `e_save_num = config['training']['encoder-save']`
     * `states_dir = config['output']['network-states-directory']`
-3. Initialise the data and decoder by calling
-   `initialization` with the parameters _network type_ and _configuration path_,
+4. Initialise the data and decoder by calling
+   `initialization` with the parameters _name_ and _config_,
    this will return the decoder (`decoder`) data loaders (`d_loaders`)
    and the decoder network as the second and third index, respectively.
-4. Initialise the data and encoder as done in step 2, but with the additional argument
+5. Initialise the data and encoder as done in step 2, but with the additional argument
    `transform=d_loaders[0].dataset.dataset.transform`,
    and retrieving the fourth index for the device (`device`).
-5. Train the decoder by calling `training` with the parameters:
+6. Train the decoder by calling `training` with the parameters:
     * `(0, epochs)`
-    * `([], [])`
     * `d_loaders`
     * `decoder`
     * `device`
     * `states_dir=state_dir`
-6. Repeat the same for the encoder, but with the additional argument `surrogate=decoder`
+7. Repeat the same for the encoder, but with the additional argument `surrogate=decoder`
 
 **Example code**:
 
 ```python
-import yaml
-
 from fspnet.spectrum_fit import initialization
 from fspnet.utils.training import training
+from fspnet.utils.utils import open_config
 
 config_path = './config.yaml'
 
 # Open configuration file
-with open(config_path, 'r', encoding='utf-8') as file:
-    config = list(yaml.safe_load_all(file))[0]
+_, config = open_config(0, config_path)
 
 # Load parameters
 epochs = config['training']['epochs']
@@ -281,7 +285,7 @@ e_save_num = config['training']['encoder-save']
 states_dir = config['output']['network-states-directory']
 
 # Initialise networks
-d_loaders, decoder = initialization('decoder', config_path)[2:4]
+d_loaders, decoder = initialization('decoder', config)[2:4]
 *_, e_loaders, encoder, device = initialization(
     'encoder',
     config_path,
@@ -291,7 +295,6 @@ d_loaders, decoder = initialization('decoder', config_path)[2:4]
 # Train networks
 training(
     (0, epochs),
-    ([], []),
     d_loaders,
     decoder,
     device,
@@ -300,7 +303,6 @@ training(
 )
 training(
     (0, epochs),
-    ([], []),
     e_loaders,
     encoder,
     device,
@@ -317,6 +319,16 @@ To generate the spectra parameter predictions, go to section
 [Fitting the Data](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#314-fitting-the-data),
 but replace `encoder-load` with 2.
 
+### 3.3 Running Scripts via Command Line
+
+Every script directly under fspnet can be run via the command line using the command:  
+`python3 -m fspnet.[script name] [--option name] [option value]`  
+All have the optional argument `--config_path`, which is the path to the configuration file,  
+default is `../config.yaml`.
+
+`spectrum_fit.py` can take tha additional optional argument `--tests`,
+which determines if PyXspec tests should be used, default is True.
+
 ## 4 Analysis Tools
 
 There are several functions included that can help with training the network and
@@ -324,11 +336,8 @@ measuring the performance.
 
 ### 4.1 Plotting Reconstructions and Loss per Epoch
 
-The module `fspnet.utils.plot_utils` contains the function `plot_initialization`,
+The module `fspnet.utils.plots` contains the function `plot_training`,
 which will plot the reconstructions and losses per epoch for a network.  
-`plot_initialization` takes five arguments,
-the first two are the file prefix and path to the directory to save the plot,
-the last three come from the output of the `training` function from `fspnet.utils.train_utils`.  
 **Training the network is not required**
 as the function `training` will still return the required outputs
 when loading from a pre-trained network.
@@ -337,30 +346,81 @@ when loading from a pre-trained network.
 
 ```python
 from fspnet.utils.training import training
-from fspnet.utils.plots import plot_initialization
+from fspnet.utils.plots import plot_training
 
 # Get predictions and spectra for the decoder
 decoder_return = training(...)
 
-plot_initialization('Decoder', '../plots/', *decoder_return)
+plot_training('Decoder', config['output']['plots-directory'], *decoder_return)
 ```
 
-### 4.2 Calculating & Plotting the Saliency
+### 4.2 Comparing Parameter Predictions Against Fitted Parameters
+
+If you have previously fitted parameters,
+you can compare the performance of the network for each parameter using the functions
+`param_comparison`, `plot_param_comparison`, and `plot_param_distribution` from the modules
+`fspnet.utils.analysis` and `fspnet.utils.plots`.
+
+`param_comparison` and `plot_param_comparison` are used to plot parameter predictions against
+fitted parameters for each parameter.
+
+`plot_param_distribution` shows how the parameter predictions are distributed
+compared to the fitted parameters.
+
+To get the predictions, the function `predict_parameters` from `fspnet.spectrum_fit`
+can be used as mentioned in
+[Fitting the Data](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#314-fitting-the-data).
+
+In addition to this, several parameters in `spectrum_fit.py config file` need configuring:
+* `data` options:
+    * `encoder-parameters-path`: _path to the fitted parameters_
+* 'model' options:
+    * `parameter-names`: _list of names for each parameter_
+
+**Example code**
+
+```python
+from fspnet.spectrum_fit import initialization, predict_parameters
+from fspnet.utils.analysis import param_comparison
+from fspnet.utils.plots import plot_param_comparison, plot_param_distribution
+
+plots_dir = config['output']['plots-directory']
+param_names = config['model']['parameter-names']
+
+e_loaders = initialization(...)[2]
+
+params = predict_parameters(config=config)
+comparison_output = param_comparison(config=config)
+
+plot_param_comparison(
+    plots_dir,
+    param_names,
+    *comparison_output,
+)
+plot_param_distribution(
+    plots_dir,
+    param_names,
+    params[:, 1:].astype(float),
+    e_loaders[1],
+)
+```
+
+### 4.3 Calculating & Plotting the Saliency
 
 Saliency maps can be used to infer the influence of the input on the output.  
 This can be useful to see what the network is trying to improve the most,
 but it can be quite ambiguous.
 
-There are two functions to calculate the saliency that come from `fspnet.utils.saliency_utils`,
+There are two functions to calculate the saliency that come from `fspnet.utils.analysis`,
 `decoder_saliency` and `autoencoder_saliency`.  
-The autoencoder saliency can be plotted using `plot_saliency` from `fspnet.utils.plot_utils`.
+The autoencoder saliency can be plotted using `plot_saliency` from `fspnet.utils.plots`.
 
 **Example code**:
 
 ```python
 from fspnet.spectrum_fit import initialization
 from fspnet.utils.plots import plot_saliency
-from fspnet.utils.saliency import autoencoder_saliency, decoder_saliency
+from fspnet.utils.analysis import autoencoder_saliency, decoder_saliency
 
 # Initialise networks
 d_loaders, decoder = initialization(...)[2:4]
@@ -372,16 +432,18 @@ saliency_output = autoencoder_saliency(e_loaders[1], device, encoder, decoder)
 plot_saliency('../plots/', *saliency_output)
 ```
 
-### 4.3 Getting the PGStatistics of the Encoder
+### 4.4 Getting the PGStatistics of the Encoder
 
 To measure the performance of the encoder,
-`pyxspec_test` from `fspnet.utils.train_utils` can be used to generate
+`pyxspec_test` from `fspnet.utils.training` can be used to generate
 Poisson data, Gaussian noise statistics (PGStats) values for each prediction and return the median value.  
 `pyxspec_test` uses PyXspec, which is slow, so it tries to leverage multiprocessing;
 therefore, the more CPU cores, the faster this process will be.
 
 The function will create a `.csv` file that will have
-the spectrum name/number, predicted parameters and PGStat.  
+the spectrum name/number, predicted parameters and PGStat. 
+The directory location is specified in
+`spectrum_fit.py config file`&rarr;`output`&rarr;`worker-directory`  
 The function will also return the median PGStat and predicted parameters.
 
 **Example code**:
@@ -395,7 +457,7 @@ from fspnet.utils.training import pyxspec_test
 
 # Individual results will be saved to '../data/worker/Encoder_output.csv
 median_pgstat, parameters = pyxspec_test(
-    '../data/worker/',
+    config['output']['worker-directory'],
     e_loaders[1],
     job_name='Encoder_output',
     device=device,
@@ -479,3 +541,26 @@ with different optimisation methods.
 The script for network optimisation is `fspnet.network_optimizer`.  
 It can save the optimisation progress
 and produce several plots to visualise the optimal hyperparameters.
+
+Currently, only changing the learning rate, number of convolutional filters
+and convolutional layers in two parts in the network are supported.
+
+The function `optimize_network` can be imported to integrate network optimisation.  
+`optimize_network` returns a dictionary containing the parameters from the best trial.
+
+Several parameters in `network_optimizer.py config file` need configuring:
+* `optimization` options:
+    * `name`: _name of the network to optimize_
+* `output` options:
+    * `network-states-directory`: _path to the directory containing the network states_
+
+**Example code**
+
+```python
+from fspnet.network_optimizer import optimize_network
+from fspnet.spectrum_fit import initialization
+
+*_, loaders, _, device = initialization(...)
+
+optimize_network(config, loaders, device)
+```
