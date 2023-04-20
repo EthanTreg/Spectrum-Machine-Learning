@@ -1,13 +1,14 @@
 """
 Loads data and creates data loaders for network training
 """
+import os
+import pickle
+
 import torch
 import numpy as np
 from numpy import ndarray
 from torch import nn, Tensor
 from torch.utils.data import Dataset, DataLoader, Subset
-
-from fspnet.utils.utils import even_length, data_normalization
 
 
 class SpectrumDataset(Dataset):
@@ -24,8 +25,6 @@ class SpectrumDataset(Dataset):
         Names of each spectrum
     spectra : tensor
         Spectra dataset
-    uncertainty : tensor
-        Spectral Poisson uncertainty
     params : tensor
         Parameters for each spectra if supervised
     indices : ndarray, default = None
@@ -39,86 +38,73 @@ class SpectrumDataset(Dataset):
     def __init__(
             self,
             data_file: str,
-            params_path: str,
             log_params: list[int],
-            names_path: str = None,
-            transform: list[tuple[ndarray, ndarray]] = None):
+            transform: tuple[tuple[float, float], tuple[ndarray, ndarray]] = None):
         """
         Parameters
         ----------
         data_file : string
             Path to the file with the spectra dataset
-        params_path : string
-            Path to the labels file, if none, then an unsupervised approach is used
         log_params : list[int]
             Index of each free parameter in logarithmic space
-        names_path : string, default = None
-            Path to the names of the spectra, if none, index value will be used
-        transform : list[tuple[ndarray, ndarray]], default = None
+        transform : tuple[tuple[float, float], tuple[ndarray, ndarray]], default = [None, None]
             Min and max spectral range and mean & standard deviation of parameters
             used for transformation after log
         """
         self.indices = None
         self.log_params = log_params
-        self.spectra, self.uncertainty = np.rollaxis(np.load(data_file), 1)
+
+        with open(data_file, 'rb') as file:
+            data = pickle.load(file)
+
+        self.spectra = np.array(data['spectra'])
+
+        # Get spectra names if available
+        if 'names' in data:
+            self.names = data['names']
+        else:
+            self.names = np.arange(self.spectra.shape[0])
 
         if transform:
-            spectra_transform, params_transform = transform
+            self.transform = transform
         else:
-            spectra_transform = params_transform = None
+            self.transform = [None, None]
 
         # Set negative values equal to minimum positive value
         if np.min(self.spectra) <= 0:
-            self.spectra = self._min_clamp(self.spectra)
-
-        if np.min(self.uncertainty) <= 0:
-            self.uncertainty = self._min_clamp(self.uncertainty)
+            self.spectra = _min_clamp(self.spectra, axis=1)
 
         # Transform spectra & uncertainty
-        self.uncertainty = np.log10(1 + self.uncertainty / self.spectra)
         self.spectra = np.log10(self.spectra)
-        self.spectra, spectra_transform = data_normalization(
+        self.spectra, self.transform[0] = data_normalization(
             self.spectra,
             mean=False,
-            transform=spectra_transform,
+            transform=self.transform[0],
         )
-        self.uncertainty /= spectra_transform[1]
 
         # Make sure spectra & uncertainty length is even
-        self.spectra = even_length(torch.from_numpy(self.spectra).float())
-        self.uncertainty = even_length(torch.from_numpy(self.uncertainty).float())
+        self.spectra = _even_length(torch.from_numpy(self.spectra).float())
 
         # If no parameters are provided
-        if not params_path:
+        if 'params' not in data:
             self.params = np.empty(self.spectra.size(0))
-            self.transform = transform
-            self.names = np.arange(self.spectra.size(0))
             return
 
-        # Load spectra parameters and names
-        self.params = np.load(params_path)
-
-        if names_path:
-            self.names = np.load(names_path)
-        else:
-            self.names = np.arange(self.spectra.size(0))
+        self.params = np.array(data['params'])
 
         # Transform parameters
         self.params[:, log_params] = np.log10(self.params[:, log_params])
-        self.params, params_transform = data_normalization(
+        self.params, self.transform[1] = data_normalization(
             self.params,
             axis=0,
-            transform=params_transform,
+            transform=self.transform[1],
         )
         self.params = torch.from_numpy(self.params).float()
-
-        # Get parameter mean and standard deviation if transformation not supplied
-        self.transform = [spectra_transform, params_transform]
 
     def __len__(self) -> int:
         return self.spectra.shape[0]
 
-    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, Tensor, str | int]:
+    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, str | int]:
         """
         Gets the training data for a given index
 
@@ -129,34 +115,10 @@ class SpectrumDataset(Dataset):
 
         Returns
         -------
-        tuple[Tensor, Tensor, Tensor, string | integer]
-            Spectrum data, target parameters, spectrum uncertainty and spectrum name/number
+        tuple[Tensor, Tensor, string | integer]
+            Spectrum data, target parameters, and spectrum name/number
         """
-        return self.spectra[idx], self.params[idx], self.uncertainty[idx], self.names[idx]
-
-    def _min_clamp(self, data: ndarray) -> ndarray:
-        """
-        Clamps all values <= 0 to the minimum non-zero positive value
-
-        Parameters
-        ----------
-        data : ndarray
-            Input data to be clamped
-
-        Returns
-        -------
-        ndarray
-            Clamped data
-        """
-        data = np.swapaxes(data, 0, 1)
-        min_count = np.min(
-            data,
-            where=data > 0,
-            initial=np.max(data),
-            axis=0,
-        )
-
-        return np.swapaxes(np.maximum(data, min_count), 0, 1)
+        return self.spectra[idx], self.params[idx], self.names[idx]
 
     def downscaler(self, downscales: int):
         """
@@ -175,6 +137,59 @@ class SpectrumDataset(Dataset):
             self.spectra = avgpool(self.spectra)
 
         self.spectra = self.spectra.squeeze(dim=1)
+
+
+def _even_length(x: torch.Tensor) -> torch.Tensor:
+    """
+    Returns a tensor of even length in the last
+    dimension by merging the last two values
+
+    Parameters
+    ----------
+    x : Tensor
+        Input data
+
+    Returns
+    -------
+    Tensor
+        Output data with even length
+    """
+    if x.size(-1) % 2 != 0:
+        x = torch.cat((
+            x[..., :-2],
+            torch.mean(x[..., -2:], dim=-1, keepdim=True)
+        ), dim=-1)
+
+    return x
+
+
+def _min_clamp(data: np.ndarray, axis: int = None) -> np.ndarray:
+    """
+    Clamps all values <= 0 to the minimum non-zero positive value
+
+    Parameters
+    ----------
+    data : ndarray
+        Input data to be clamped
+    axis : integer, default = None
+        Which axis to take the minimum over, if None, take the global minimum
+
+    Returns
+    -------
+    ndarray
+        Clamped data
+    """
+    min_count = np.min(
+        data,
+        where=data > 0,
+        initial=np.max(data),
+        axis=axis,
+    )
+
+    if axis:
+        min_count = np.expand_dims(min_count, axis=axis)
+
+    return np.maximum(data, min_count)
 
 
 def load_x_data(y_size: int) -> ndarray:
@@ -205,14 +220,77 @@ def load_x_data(y_size: int) -> ndarray:
     return x_data
 
 
+def data_normalization(
+        data: np.ndarray,
+        mean: bool = True,
+        axis: int = None,
+        transform: tuple[float, float] = None) -> tuple[np.ndarray, tuple[float, float]]:
+    """
+    Transforms data either by normalising or
+    scaling between 0 & 1 depending on if mean is true or false.
+
+    Parameters
+    ----------
+    data : ndarray
+        Data to be normalised
+    mean : boolean, default = True
+        If data should be normalised or scaled between 0 and 1
+    axis : integer, default = None
+        Which axis to normalise over, if none, normalise over all axes
+    transform: tuple[float, float], default = None
+        If transformation values exist already
+
+    Returns
+    -------
+    tuple[ndarray, tuple[float, float]]
+        Transformed data & transform values
+    """
+    if mean and not transform:
+        transform = [np.mean(data, axis=axis), np.std(data, axis=axis)]
+    elif not mean and not transform:
+        transform = [
+            np.min(data, axis=axis),
+            np.max(data, axis=axis) - np.min(data, axis=axis)
+        ]
+
+        transform[1] = _min_clamp(transform[1])
+
+    if axis:
+        data = (data - np.expand_dims(transform[0], axis=axis)) /\
+               np.expand_dims(transform[1], axis=axis)
+    else:
+        data = (data - transform[0]) / transform[1]
+
+    return data, transform
+
+
+def delete_data(directory: str = None, files: list[str] = None):
+    """
+    Removes all files in the provided directory and/or all files in the list of provided files
+
+    Parameters
+    ----------
+    directory : string, default = None
+        Directory to remove all files within
+    files : list[string], default = None
+        List of files to remove
+    """
+    if files:
+        for file in files:
+            if os.path.exists(file):
+                os.remove(file)
+
+    if directory:
+        for file in os.listdir(directory):
+            os.remove(directory + file)
+
+
 def data_initialisation(
         spectra_path: str,
-        params_path: str,
         log_params: list,
         kwargs: dict,
         val_frac: float = 0.1,
-        names_path: str = None,
-        transform: list[list[ndarray]] = None,
+        transform: tuple[tuple[float, float], tuple[ndarray, ndarray]] = None,
         indices: ndarray = None) -> tuple[DataLoader, DataLoader]:
     """
     Initialises training and validation data
@@ -221,17 +299,13 @@ def data_initialisation(
     ----------
     spectra_path : string
         Path to synthetic data
-    params_path : string
-        Path to labels
     log_params : list
         Index of each free parameter in logarithmic space
     kwargs : dictionary
         Keyword arguments for dataloader
     val_frac : float, default = 0.1
         Fraction of validation data
-    names_path : string, default = None
-        Path to the names of the spectra, if none, index value will be used
-    transform : list[ndarray], default = None
+    transform : tuple[tuple[float, float], tuple[ndarray, ndarray]], default = None
         Min and max spectral range and mean & standard deviation of parameters
     indices : ndarray, default = None
         Data indices for random training & validation datasets
@@ -246,9 +320,7 @@ def data_initialisation(
     # Fetch dataset & create train & val data
     dataset = SpectrumDataset(
         spectra_path,
-        params_path,
         log_params,
-        names_path=names_path,
         transform=transform,
     )
     val_amount = max(int(len(dataset) * val_frac), 1)
@@ -270,6 +342,6 @@ def data_initialisation(
     else:
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 
-    print(f'Training data size: {len(train_dataset)}\tValidation data size: {len(val_dataset)}\n')
+    print(f'\nTraining data size: {len(train_dataset)}\tValidation data size: {len(val_dataset)}')
 
     return train_loader, val_loader

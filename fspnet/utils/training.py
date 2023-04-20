@@ -1,8 +1,6 @@
 """
 Trains the network and evaluates the performance
 """
-import os
-import subprocess
 from time import time
 
 import torch
@@ -11,12 +9,14 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from fspnet.utils.network import Network
+from fspnet.utils.multiprocessing import check_cpus, mpi_multiprocessing
 
 
 def _xspec_loss(
         worker_dir: str,
         names: list[str],
         params: np.ndarray,
+        cpus: int = 1,
         job_name: str = None) -> float:
     """
     Calculates the PGStat loss using PyXspec
@@ -30,6 +30,8 @@ def _xspec_loss(
         Spectra names
     params : ndarray
         Parameter predictions from CNN
+    cpus : integer, default = 1
+        Number of threads to use, 0 will use all available
     job_name : string, default = None
         If not None, file name to save the output to
 
@@ -39,36 +41,21 @@ def _xspec_loss(
         Average loss
     """
     # Initialize variables
-    cpus = os.cpu_count()
-    initial_time = time()
     data = []
 
-    # If <2 CPU cores available, perform single threading, otherwise use multiple cores
-    if cpus == 1:
-        subprocess.run(['python3', './utils/pyxspec_worker.py', worker_dir], check=True)
-    else:
-        # Divide work between workers
-        worker_names = np.array_split(names, cpus)
-        worker_params = np.array_split(params, cpus)
+    cpus = check_cpus(cpus)
 
-        # Save data to file for each worker
-        for i, (names_batch, params_batch) in enumerate(zip(worker_names, worker_params)):
-            job = np.hstack((np.expand_dims(names_batch, axis=1), params_batch))
-            np.savetxt(f'{worker_dir}worker_{i}_job.csv', job, delimiter=',', fmt='%s')
+    # Divide work between workers
+    worker_names = np.array_split(names, cpus)
+    worker_params = np.array_split(params, cpus)
 
-        # Start workers
-        print(f'Starting {cpus} workers...')
-        subprocess.run([
-            'mpiexec',
-            '-n',
-            str(cpus),
-            '--use-hwthread-cpus',
-            'python3',
-            './utils/pyxspec_worker.py',
-            os.getcwd(),
-            worker_dir,
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print(f'Workers finished\tTime: {time() - initial_time:.3e} s')
+    # Save data to file for each worker
+    for i, (names_batch, params_batch) in enumerate(zip(worker_names, worker_params)):
+        job = np.hstack((np.expand_dims(names_batch, axis=1), params_batch))
+        np.savetxt(f'{worker_dir}worker_{i}_job.csv', job, delimiter=',', fmt='%s')
+
+    # Run workers to calculate PGStat
+    mpi_multiprocessing(cpus, len(names), f'fspnet.utils.pyxspec_worker {worker_dir}')
 
     # Retrieve worker outputs
     for i in range(cpus):
@@ -87,6 +74,7 @@ def _xspec_loss(
 def pyxspec_test(
         worker_dir: str,
         loader: DataLoader,
+        cpus: int = 1,
         job_name: str = None,
         defaults: torch.Tensor = None,
         device: torch.device = None,
@@ -101,6 +89,8 @@ def pyxspec_test(
         Directory to where to save worker data
     loader : DataLoader
         PyTorch DataLoader that contains data to train
+    cpus : integer, default = 1
+        Number of threads to use, 0 will use all available
     job_name : string, default = None
         If not None, file name to save the output to
     defaults : Tensor, default = None
@@ -144,7 +134,7 @@ def pyxspec_test(
     params = torch.cat(params)
     print(f'Parameter retrieval time: {time() - initial_time:.3e} s')
 
-    loss = _xspec_loss(worker_dir, names, params.numpy(), job_name=job_name)
+    loss = _xspec_loss(worker_dir, names, params.numpy(), cpus=cpus, job_name=job_name)
     print(f'Reduced PGStat Loss: {loss:.3e}')
 
 
@@ -294,6 +284,6 @@ def training(
     # Final validation
     loss, spectra, outputs = train_val(device, loaders[1], cnn, train=False, surrogate=surrogate)
     losses[1].append(loss)
-    print(f'Final validation loss: {losses[1][-1]:.3e}\n')
+    print(f'\nFinal validation loss: {losses[1][-1]:.3e}')
 
     return losses, spectra, outputs

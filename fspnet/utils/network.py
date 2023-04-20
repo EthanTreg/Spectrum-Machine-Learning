@@ -22,6 +22,8 @@ class Network(nn.Module):
         Name of the network, used for saving
     layers : list[dictionary]
         Layers with layer parameters
+    extraction : Tensor
+        Values extracted from the network using an extraction layer
     network : ModuleList
         Network construction
     optimizer : Optimizer
@@ -57,6 +59,7 @@ class Network(nn.Module):
         """
         super().__init__()
         self.name = name
+        self.extraction = None
 
         # If network is an encoder
         if 'Encoder' in name:
@@ -105,6 +108,10 @@ class Network(nn.Module):
             # Shortcut layers
             elif layer['type'] == 'shortcut':
                 x = x + outputs[layer['layer']]
+            # Extraction layer
+            elif layer['type'] == 'extract':
+                x = x[..., layer['number']:]
+                self.extraction = x[..., :layer['number']]
             # All other layers
             else:
                 x = self.network[i](x)
@@ -112,6 +119,46 @@ class Network(nn.Module):
             outputs.append(x)
 
         return x
+
+
+def load_network(
+        load_num: int,
+        states_dir: str,
+        device: torch.device,
+        network: Network) -> tuple[int, Network, tuple[list, list]] | None:
+    """
+    Loads the network from a previously saved state
+
+    Can account for changes in the network
+
+    Parameters
+    ----------
+    load_num : integer
+        File number of the saved state
+    states_dir : string
+        Directory to the save files
+    device : device
+        Which device type PyTorch should use
+    network : Network
+        The network to append saved state to
+
+    Returns
+    -------
+    tuple[int, Encoder | Decoder, Optimizer, ReduceLROnPlateau, tuple[list, list]]
+        The initial epoch, the updated network, optimizer
+        and scheduler, and the training and validation losses
+    """
+    d_state = torch.load(f'{states_dir}{network.name}_{load_num}.pth', map_location=device)
+
+    # Apply the saved states to the new network
+    initial_epoch = d_state['epoch']
+    network.load_state_dict(network.state_dict() | d_state['state_dict'])
+    network.optimizer.load_state_dict(d_state['optimizer'])
+    network.scheduler.load_state_dict(d_state['scheduler'])
+    train_loss = d_state['train_loss']
+    val_loss = d_state['val_loss']
+
+    return initial_epoch, network, (train_loss, val_loss)
 
 
 def create_network(
@@ -161,41 +208,13 @@ def create_network(
 
         module_list.append(kwargs['module'])
 
+    if kwargs['data_size'] != output_size:
+        log.error(
+            f"Network output size ({kwargs['data_size']}) != data output size ({output_size})",
+        )
+
+    if kwargs['dims'][-1] != output_size:
+        log.error(f"Network output filters (num={kwargs['dims'][-1]}) has not been reduced, "
+                  'reshape with output = [-1] may be missing')
+
     return file['layers'], module_list
-
-
-def load_network(
-        load_num: int,
-        states_dir: str,
-        network: Network) -> tuple[int, Network, tuple[list, list]] | None:
-    """
-    Loads the network from a previously saved state
-
-    Can account for changes in the network
-
-    Parameters
-    ----------
-    load_num : integer
-        File number of the saved state
-    states_dir : string
-        Directory to the save files
-    network : Network
-        The network to append saved state to
-
-    Returns
-    -------
-    tuple[int, Encoder | Decoder, Optimizer, ReduceLROnPlateau, tuple[list, list]]
-        The initial epoch, the updated network, optimizer
-        and scheduler, and the training and validation losses
-    """
-    d_state = torch.load(f'{states_dir}{network.name}_{load_num}.pth')
-
-    # Apply the saved states to the new network
-    initial_epoch = d_state['epoch']
-    network.load_state_dict(network.state_dict() | d_state['state_dict'])
-    network.optimizer.load_state_dict(d_state['optimizer'])
-    network.scheduler.load_state_dict(d_state['scheduler'])
-    train_loss = d_state['train_loss']
-    val_loss = d_state['val_loss']
-
-    return initial_epoch, network, (train_loss, val_loss)

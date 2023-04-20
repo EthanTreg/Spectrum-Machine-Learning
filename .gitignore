@@ -5,9 +5,10 @@
 **/*[Tt][Ee][Ss][Tt]*
 **/*[Tt][Ee][Mm][Pp]*
 /.idea
-/.vscode
 __pycache__/
 /data/
 /plots/
 /model_states/*
 !/model_states/*_1.pth
+model_states/*[Tt][Ee][Ss][Tt]*
+model_states/*[Tt][Ee][Mm][Pp]*

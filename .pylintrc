@@ -3,11 +3,12 @@ ignore-patterns=(.)*_test\.py,test_(.)*\.py,test.py
 init-hook="import sys; sys.path.append('.')"
 
 [BASIC]
-good-names=f, i, j, k, y
+good-names=i, j, k, y
 good-names-rgxs=x[0-9]?$
 
 [TYPECHECK]
 generated-members=torch.*
+ignored-modules=scipy
 ignored-classes=HDUList,mpi4py.MPI,Dataset
 
 [pylint.FORMAT]

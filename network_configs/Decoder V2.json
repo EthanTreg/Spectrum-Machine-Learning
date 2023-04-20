@@ -1,51 +1,51 @@
 {
-    "net": {
-        "dropout_prob": 0.1
+  "net": {
+    "dropout_prob": 0.1
+  },
+  "layers": [
+    {
+      "type": "linear",
+      "factor": 0.0625
     },
-    "layers": [
-        {
-            "type": "linear",
-            "factor": 0.0625
-        },
-        {
-            "type": "linear",
-            "factor": 0.125
-        },
-        {
-            "type": "linear",
-            "factor": 0.25
-        },
-        {
-            "type": "reshape",
-            "output": [1, -1]
-        },
-        {
-            "type": "convolutional",
-            "filters": 32
-        },
-        {
-            "type": "conv_transpose",
-            "filters": 16,
-            "batch_norm": 1
-        },
-        {
-            "type": "convolutional",
-            "filters": 32,
-            "batch_norm": 1
-        },
-        {
-            "type": "conv_upscale",
-            "filters": 8
-        },
-        {
-            "type": "gru"
-        },
-        {
-            "type": "conv_depth_downscale"
-        },
-        {
-            "type": "reshape",
-            "output": [-1]
-        }
-    ]
+    {
+      "type": "linear",
+      "factor": 0.125
+    },
+    {
+      "type": "linear",
+      "factor": 0.25
+    },
+    {
+      "type": "reshape",
+      "output": [1, -1]
+    },
+    {
+      "type": "convolutional",
+      "filters": 32
+    },
+    {
+      "type": "conv_transpose",
+      "filters": 16,
+      "batch_norm": 1
+    },
+    {
+      "type": "convolutional",
+      "filters": 32,
+      "batch_norm": 1
+    },
+    {
+      "type": "conv_upscale",
+      "filters": 8
+    },
+    {
+      "type": "gru"
+    },
+    {
+      "type": "conv_depth_downscale"
+    },
+    {
+      "type": "reshape",
+      "output": [-1]
+    }
+  ]
 }

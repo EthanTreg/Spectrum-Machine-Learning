@@ -1,6 +1,8 @@
 """
 Utility functions for preprocessing including fetching spectra names and corrects spectrum
 """
+import re
+
 import numpy as np
 import pandas as pd
 from numpy import ndarray
@@ -13,12 +15,12 @@ def _channel_kev(channel: ndarray) -> ndarray:
 
     Parameters
     ----------
-    channel : ndarray
+    channel : DataFrame
         Detector channels
 
     Returns
     -------
-    ndarray
+    DataFrame
         Channels in units of keV
     """
     return (channel * 10 + 5) / 1e3
@@ -97,8 +99,8 @@ def _binning(x_data: ndarray, y_data: ndarray, bins: ndarray) -> tuple[ndarray, 
 
 def _corrected_spectrum(
         detectors: int,
-        spectrum_exposure: int,
-        back_exposure: int,
+        spectrum_exposure: float,
+        back_exposure: float,
         spectrum: pd.DataFrame,
         background: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -108,14 +110,14 @@ def _corrected_spectrum(
     ----------
     detectors : integer
         Number of detectors
-    spectrum_exposure : integer
+    spectrum_exposure : float
         Exposure time for spectrum
-    back_exposure : integer
+    back_exposure : float
         Exposure time for background
     spectrum : DataFrame
-        Original spectrum in either counts or rate
+        Original spectrum in either counts (COUNTS) or rate (RATE)
     background : DataFrame
-        Background in either counts or rate
+        Background in either counts (COUNTS) or rate (RATE)
 
     Returns
     -------
@@ -133,13 +135,13 @@ def _corrected_spectrum(
     return y_data, spectrum['RATE'] * spectrum_exposure
 
 
-def _spectrum_data(
+def spectrum_data(
         detectors: int,
-        back_exposure: int,
+        exposure: float,
+        back_exposure: float,
         spectrum: pd.DataFrame,
         background: pd.DataFrame,
-        spectrum_info: fits.fitsrec,
-        cut_off: tuple[float, float] = None) -> tuple[ndarray, ndarray, ndarray]:
+        cut_off: tuple[float, float] = None) -> tuple[ndarray, ndarray, ndarray, ndarray]:
     """
     Corrects and normalizes the spectrum using background, exposure time and number of detectors
     Also calculates the normalized uncertainty from data counts
@@ -148,21 +150,21 @@ def _spectrum_data(
     ----------
     detectors : integer
         Number of detectors
-    back_exposure : integer
+    exposure : float
+        Exposure time for spectrum
+    back_exposure : float
         Exposure time for background
     spectrum : DataFrame
-        Original spectrum in either counts or rate
+        Original spectrum in either counts (COUNTS) or rate (RATE) with channel (CHANNEL)
     background : DataFrame
-        Background in either counts or rate
-    spectrum_info : fitsrec
-        Fits information on the spectrum
+        Background in either counts (COUNTS) or rate (RATE)
     cut_off : tuple[float, float], default = (0.3, 10)
         Lower and upper limit of accepted data in keV
 
     Returns
     -------
-    tuple[ndarray, ndarray, ndarray]
-        Binned x values, y values and uncertainty
+    tuple[ndarray, ndarray, ndarray, ndarray]
+        Binned x values, y values, uncertainty and energy bin width
     """
     # Initialize variables
     bins = np.array([[0, 20, 248, 600, 1200, 1494, 1500], [2, 3, 4, 5, 6, 2, 1]], dtype=int)
@@ -174,7 +176,7 @@ def _spectrum_data(
     x_data = _channel_kev(spectrum['CHANNEL'].to_numpy())
     y_data, counts = _corrected_spectrum(
         detectors,
-        spectrum_info['EXPOSURE'],
+        exposure,
         back_exposure,
         spectrum,
         background
@@ -183,8 +185,7 @@ def _spectrum_data(
     # Bin data
     y_bin = _binning(x_data, y_data.to_numpy(), bins)[1]
     x_bin, counts_bin, energy_bin = _binning(x_data, counts.to_numpy(), bins)
-    uncertainty = np.maximum(np.sqrt(np.maximum(counts_bin, 0)), 1) / \
-                  (spectrum_info['EXPOSURE'] * detectors)
+    uncertainty = np.maximum(np.sqrt(np.maximum(counts_bin, 0)), 1) / (exposure * detectors)
 
     # Energy normalization
     y_bin /= energy_bin
@@ -195,17 +196,17 @@ def _spectrum_data(
     x_bin = np.delete(x_bin, cut_indices)
     y_bin = np.delete(y_bin, cut_indices)
     uncertainty = np.delete(uncertainty, cut_indices)
+    energy_bin = np.delete(energy_bin, cut_indices)
 
-    return x_bin, y_bin, uncertainty
+    return x_bin, y_bin, uncertainty, energy_bin
 
 
-def correct_spectrum(
+def correct_spectrum_file(
         spectrum_path: str,
         background_dir: str = '',
-        aug_count: int = 0,
-        cut_off: tuple[float, float] = None) -> tuple[int, ndarray, list[tuple[ndarray, ndarray]]]:
+        cut_off: tuple[float, float] = None) -> tuple[int, ndarray, ndarray, ndarray]:
     """
-    Fetches spectrum, corrects, normalizes and bins data
+    Fetches spectrum file, corrects, normalizes, and bins data
 
     Parameters
     ----------
@@ -213,19 +214,14 @@ def correct_spectrum(
         File path to the spectrum
     background_dir : string, default = ''
         Path to the root directory where the background is located
-    aug_count : int, default = 0
-        Number of augmentations to perform
     cut_off : tuple[float, float], default = (0.3, 10)
         Lower and upper limit of accepted data in keV
 
     Returns
     -------
     tuple[integer, ndarray, list[tuple[ndarray, ndarray]]]
-        Number of detectors, binned energies and list of binned spectrum data & binned uncertainties
-        for original + augmentations
+        Number of detectors, binned energies, binned spectrum data & binned uncertainties
     """
-    data = []
-
     # Fetch spectrum & background fits files
     with fits.open(spectrum_path) as file:
         spectrum_info = file[1].header
@@ -236,36 +232,20 @@ def correct_spectrum(
         else:
             response = spectrum_info['RESPFILE']
 
-        detectors = int(response[response.find('_d') + 2:response.find('_d') + 4])
+        detectors = int(re.search(r'_d(\d+)', response).group(1))
 
     with fits.open(background_dir + spectrum_info['BACKFILE']) as file:
         back_exposure = file[1].header['EXPOSURE']
         background = pd.DataFrame(file[1].data).iloc[:, 1].to_frame()
 
     # Normalize and bin spectrum
-    x_bin, y_bin, uncertainty = _spectrum_data(
+    x_bin, y_bin, uncertainty, _ = spectrum_data(
         detectors,
         back_exposure,
+        spectrum_info['EXPOSURE'],
         spectrum,
         background,
-        spectrum_info,
         cut_off,
     )
 
-    data.append((y_bin, uncertainty))
-    scaling = np.random.uniform(0.5, 2, aug_count)
-
-    # Randomly scale background for augmentation
-    for scale in scaling:
-        y_bin = _spectrum_data(
-            detectors,
-            back_exposure,
-            spectrum,
-            background * scale,
-            spectrum_info,
-            cut_off,
-        )[1]
-
-        data.append((np.maximum(0, y_bin), uncertainty))
-
-    return detectors, x_bin, data
+    return detectors, x_bin, y_bin, uncertainty

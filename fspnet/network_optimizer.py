@@ -131,7 +131,7 @@ def _objective(
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
 
-        progress_bar(epoch, epochs, f'Loss: {loss:.3e}\tEpoch: {epoch}')
+        progress_bar(epoch, epochs + 1, f'Loss: {loss:.3e}\tEpoch: {epoch}')
 
     # Final validation
     loss = train_val(device, loaders[1], decoder, train=False)[0]
@@ -212,7 +212,7 @@ def optimize_network(
     return study.best_params
 
 
-def main(config_path: str = './config.yaml'):
+def main(config_path: str = '../config.yaml'):
     """
     Main function for optimizing networks
 
@@ -222,9 +222,8 @@ def main(config_path: str = './config.yaml'):
         File path to the configuration file
     """
     # Constants
-    _, config = open_config(3, config_path=config_path)
+    _, config = open_config('network-optimizer', config_path=config_path)
     spectra_path = config['data']['spectra-path']
-    params_path = config['data']['parameters-path']
     log_params = config['optimization']['log-parameters']
 
     # Set device to GPU if available
@@ -234,7 +233,6 @@ def main(config_path: str = './config.yaml'):
     # Initialize datasets
     loaders = data_initialisation(
         spectra_path,
-        params_path,
         log_params,
         kwargs,
     )

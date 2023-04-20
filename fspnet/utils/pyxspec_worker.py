@@ -2,11 +2,13 @@
 Worker for fitting spectral parameters using PyXspec
 """
 import os
-import argparse
 
 import xspec
 import numpy as np
 from mpi4py import MPI
+
+from fspnet.utils.utils import progress_bar
+from fspnet.utils.workers import initialize_worker
 
 
 class PyXspecFitting:
@@ -19,7 +21,7 @@ class PyXspecFitting:
         Whether to optimize the fit
     model : Model
         PyXspec model
-    fix_params : ndarray
+    fixed_params : ndarray
         Parameter number & value of fixed parameters
     fix_params_index: ndarray
         Index to insert fixed parameters into network parameter output
@@ -34,7 +36,7 @@ class PyXspecFitting:
     def __init__(
             self,
             model_name: str,
-            fix_params: np.ndarray,
+            fixed_params: dict,
             optimize: bool = False,
             iterations: int = 10,
             custom_model: str = None,
@@ -44,7 +46,7 @@ class PyXspecFitting:
         ----------
         model_name : string
             Model to use for PyXspec
-        fix_params : ndarray
+        fixed_params : dictionary
             Parameter number (starting from 1) & value of fixed parameters
         optimize : boolean, default = False
             Whether Xspec fitting should be performed
@@ -57,9 +59,8 @@ class PyXspecFitting:
         """
         super().__init__()
         self.optimize = optimize
-        self.fix_params = fix_params
+        self.fixed_params = fixed_params
         self.param_limits = np.empty((0, 2))
-        self.fix_params_index = self.fix_params[:, 0] - np.arange(self.fix_params.shape[1]) - 1
 
         # PyXspec initialization
         self.model = initialize_pyxspec(
@@ -75,7 +76,7 @@ class PyXspecFitting:
         for j in range(self.model.nParameters):
             j += 1
 
-            if j in fix_params[:, 0]:
+            if j in self.fixed_params:
                 self.model(j).frozen = True
             else:
                 limits = np.array(self.model(j).values)[[2, 5]]
@@ -98,23 +99,19 @@ class PyXspecFitting:
             PGStat loss divided by the degrees of freedom
         """
         # Merge fixed & free parameters
-        params = np.insert(params, self.fix_params_index, self.fix_params[:, 1])
+        param_indices = np.arange(params.size + len(self.fixed_params)) + 1
+        param_indices = np.setdiff1d(param_indices, list(self.fixed_params.keys()))
+        params = dict(zip(param_indices.tolist(), params)) | self.fixed_params
 
         # Update model parameters
-        self.model.setPars(params.tolist())
+        self.model.setPars(params)
 
         # If optimization is enabled, then try unless there is an error
         if self.optimize:
             try:
                 xspec.Fit.perform()
             except Exception:
-                params[-1] = 10
-                self.model.setPars(params.tolist())
-
-                try:
-                    xspec.Fit.perform()
-                except Exception:
-                    self.model.setPars(params.tolist())
+                self.model.setPars(params)
 
         # Calculate fit statistic loss
         return xspec.Fit.statistic / xspec.Fit.dof
@@ -148,8 +145,7 @@ class PyXspecFitting:
         params = np.clip(params, a_min=param_min, a_max=param_max)
 
         # Loop through each spectrum in the batch
-        for spectrum_params, name in zip(params, names):
-
+        for i, (spectrum_params, name) in enumerate(zip(params, names)):
             # Load spectrum
             xspec.Spectrum(name)
             xspec.AllData.ignore('0-0.3 10.0-**')
@@ -158,6 +154,11 @@ class PyXspecFitting:
             losses.append(self._fit_statistic(spectrum_params))
 
             xspec.AllData.clear()
+
+            if MPI.COMM_WORLD.Get_size() == 1:
+                progress_bar(i, len(names))
+            else:
+                print('update')
 
         # Average loss of batch
         return losses
@@ -196,7 +197,7 @@ def initialize_pyxspec(
         xspec.AllModels.lmod(custom_model, dirPath=model_dir)
 
     model = xspec.Model(model_name)
-    xspec.AllModels.setEnergies('0.002 500 1000 log')
+    xspec.AllModels.setEnergies('0.002 200 2000 log')
     xspec.Xset.abund = 'wilm'
 
     # Fit options
@@ -214,28 +215,9 @@ def worker():
     processing if system doesn't have multiple threads
     Access data through
     """
-    # Initialize worker
-    rank = 0
-    cpus = os.cpu_count()
-    parser = argparse.ArgumentParser()
-
-    # Retrieve script arguments
-    parser.add_argument('working_dir')
-    parser.add_argument('worker_dir')
-    args = parser.parse_args()
-    worker_dir = args.worker_dir
-
-    # Change working directory
-    os.chdir(args.working_dir)
-
-    if cpus != 1:
-        # Get worker rank
-        comm = MPI.COMM_WORLD
-        rank = comm.Get_rank()
-        print(f'Worker {rank} starting...')
+    rank, _, worker_dir, data = initialize_worker()
 
     # Retrieve data from files
-    data = np.load(f'{worker_dir}worker_data.npy', allow_pickle=True).item()
     job = np.loadtxt(f'{worker_dir}worker_{rank}_job.csv', delimiter=',', dtype=str)
     names = job[:, 0]
     params = job[:, 1:].astype(float)

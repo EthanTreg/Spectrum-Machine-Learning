@@ -1,18 +1,19 @@
 """
 Creates several plots
 """
+import pickle
+
 import numpy as np
 import matplotlib.pyplot as plt
 from numpy import ndarray
 from matplotlib.axes import Axes
-from torch.utils.data import DataLoader
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from fspnet.utils.data import load_x_data
-from fspnet.utils.utils import data_normalization
+from fspnet.utils.data import load_x_data, data_normalization
 
 MAJOR = 24
 MINOR = 20
+FIG_SIZE = (16, 9)
 
 
 def _plot_loss(train_loss: list, val_loss: list):
@@ -26,9 +27,11 @@ def _plot_loss(train_loss: list, val_loss: list):
     val_loss : list
         Validation losses
     """
-    plt.figure(figsize=(16, 9), constrained_layout=True)
+    plt.figure(figsize=FIG_SIZE, constrained_layout=True)
     plt.plot(train_loss, label='Training Loss')
     plt.plot(val_loss, label='Validation Loss')
+    plt.xticks(fontsize=MINOR)
+    plt.yticks(fontsize=MINOR)
     plt.xlabel('Epoch', fontsize=MINOR)
     plt.ylabel('Loss', fontsize=MINOR)
     plt.yscale('log')
@@ -43,7 +46,7 @@ def _plot_loss(train_loss: list, val_loss: list):
     legend.get_frame().set_alpha(None)
 
 
-def _plot_reconstructions(
+def _plot_reconstruction(
         x_data: ndarray,
         y_data: ndarray,
         y_recon: ndarray,
@@ -84,6 +87,59 @@ def _plot_reconstructions(
     return axis_2
 
 
+def _plot_reconstructions(spectra: ndarray, outputs: ndarray):
+    """
+    Plots reconstructions and residuals for 4 spectra
+
+    Parameters
+    ----------
+    spectra : ndarray
+        True spectra
+    outputs : ndarray
+        Predicted spectra
+    """
+    x_data = load_x_data(spectra.shape[-1])
+
+    # Initialize reconstructions plots
+    _, axes = plt.subplots(2, 2, figsize=FIG_SIZE, sharex='col', gridspec_kw={
+        'top': 0.92,
+        'bottom': 0.08,
+        'left': 0.09,
+        'right': 0.99,
+        'hspace': 0.05,
+        'wspace': 0.15,
+    })
+
+    axes = axes.flatten()
+
+    # Plot reconstructions
+    for spectrum, output, axis in zip(spectra, outputs, axes):
+        main_axis = _plot_reconstruction(x_data, spectrum, output, axis)
+
+    plt.figtext(0.5, 0.02, 'Energy (keV)', ha='center', va='center', fontsize=MAJOR)
+    plt.figtext(
+        0.02,
+        0.5,
+        'Scaled Log Counts',
+        ha='center',
+        va='center',
+        rotation='vertical',
+        fontsize=MAJOR,
+    )
+
+    labels = np.hstack((main_axis.get_legend_handles_labels(), axes[0].get_legend_handles_labels()))
+    legend = plt.figlegend(
+        *labels,
+        loc='lower center',
+        ncol=3,
+        bbox_to_anchor=(0.5, 0.91),
+        fontsize=MAJOR,
+        markerscale=2,
+        columnspacing=10,
+    )
+    legend.get_frame().set_alpha(None)
+
+
 def _plot_histogram(title: str, data: ndarray, data_twin: ndarray, axis: Axes) -> Axes:
     """
     Plots a histogram subplot with twin data
@@ -108,7 +164,9 @@ def _plot_histogram(title: str, data: ndarray, data_twin: ndarray, axis: Axes) -
 
     axis.set_title(title, fontsize=MAJOR)
     axis.hist(data, bins=100, alpha=0.5, density=True, label='Target')
+    axis.tick_params(labelsize=MINOR)
     twin_axis.hist(data_twin, bins=100, alpha=0.5, density=True, label='Predicted', color='orange')
+    twin_axis.tick_params(labelsize=MINOR)
 
     return twin_axis
 
@@ -121,9 +179,11 @@ def plot_saliency(plots_dir: str, spectra: ndarray, predictions: ndarray, salien
     ----------
     plots_dir : string
         Directory to save plots
-    spectra : Tensor
+    spectra : ndarray
         Target spectra
-    saliencies : Tensor
+    predictions : ndarray
+        Predicted spectra
+    saliencies : ndarray
         Saliency
     """
     # Constants
@@ -137,9 +197,8 @@ def plot_saliency(plots_dir: str, spectra: ndarray, predictions: ndarray, salien
 
     # Initialize e_saliency plots
     _, axes = plt.subplots(
-        2,
-        4,
-        figsize=(24, 12),
+        2, 4,
+        figsize=FIG_SIZE,
         sharex='col',
         gridspec_kw={'hspace': 0, 'wspace': 0}
     )
@@ -197,7 +256,7 @@ def plot_param_comparison(
     predictions : ndarray
         Parameter predictions
     """
-    _, axes = plt.subplot_mosaic('AABBCC;DDDEEE', constrained_layout=True, figsize=(16, 9))
+    _, axes = plt.subplot_mosaic('AABBCC;DDDEEE', constrained_layout=True, figsize=FIG_SIZE)
 
     # Plot each parameter
     for i, axis in enumerate(axes.values()):
@@ -205,11 +264,105 @@ def plot_param_comparison(
             min(np.min(target[:, i]), np.min(predictions[:, i])),
             max(np.max(target[:, i]), np.max(predictions[:, i]))
         ]
-        axis.scatter(target[:, i], predictions[:, i], alpha=0.8)
+        axis.scatter(target[:1000, i], predictions[:1000, i], alpha=0.2)
         axis.plot(value_range, value_range, color='k')
-        axis.set_title(param_names[i])
+        axis.set_title(param_names[i], fontsize=MAJOR)
+        axis.tick_params(labelsize=MINOR)
 
     plt.savefig(f'{plots_dir}Parameter_Comparison.png', transparent=False)
+
+
+def plot_param_distribution(name: str, data_paths: list[str], config: dict):
+    """
+    Plots histogram of each parameter for both true and predicted
+
+    Parameters
+    ----------
+    name : string
+        Name to save the plot
+    data_paths : list[string]
+        Path to the parameters
+    config : dictionary
+        Configuration dictionary
+    """
+    params = []
+    log_params = config['model']['log-parameters']
+    plots_dir = config['output']['plots-directory']
+    param_names = config['model']['parameter-names']
+
+    _, axes = plt.subplot_mosaic('AABBCC;DDDEEE', figsize=FIG_SIZE)
+
+    for data_path in data_paths:
+        if '.csv' in data_path:
+            data = np.loadtxt(
+                data_path,
+                delimiter=',',
+                usecols=range(1, 6),
+            )
+        elif '.pickle' in data_path:
+            with open(data_path, 'rb') as file:
+                data = np.array(pickle.load(file)['params'])
+        else:
+            data = np.load(data_path)
+
+        if log_params:
+            data[:, log_params] = np.log10(data[:, log_params])
+
+        params.append(np.rollaxis(data, axis=1))
+
+    # Plot subplots
+    for (
+        title,
+        *param,
+        axis,
+    ) in zip(param_names, *params, axes.values()):
+        twin_axis = _plot_histogram(title, *param, axis)
+
+    legend = plt.figlegend(
+        *np.hstack((axes['A'].get_legend_handles_labels(), twin_axis.get_legend_handles_labels())),
+        fontsize=MAJOR,
+        bbox_to_anchor=(0.95, 0.45),
+    )
+    legend.get_frame().set_alpha(None)
+    plt.tight_layout()
+    plt.savefig(plots_dir + name)
+
+
+def plot_linear_weights(config: dict, weights: ndarray):
+    """
+    Plots the mappings of the weights from the lowest dimension
+    to a high dimension for the linear layers
+
+    Parameters
+    ----------
+    config : dictionary
+        Configuration dictionary
+    weights : ndarray
+        Mappings of low dimension to high dimension
+    """
+    plots_dir = config['output']['plots-directory']
+    param_names = config['model']['parameter-names']
+
+    _, axes = plt.subplot_mosaic(
+        'AABBCC;DDDEEE',
+        figsize=FIG_SIZE,
+        gridspec_kw={
+            'top': 0.95,
+            'bottom': 0.08,
+            'left': 0.06,
+            'right': 0.99,
+            'hspace': 0.2,
+            'wspace': 0.75,
+        },
+    )
+
+    for title, weight, axis in zip(param_names, weights, axes.values()):
+        axis.scatter(load_x_data(weight.size), weight)
+        axis.set_title(title, fontsize=MAJOR)
+        axis.tick_params(labelsize=MINOR)
+
+    plt.figtext(0.5, 0.02, 'Energy (keV)', ha='center', va='center', fontsize=MAJOR)
+    plt.savefig(f'{plots_dir}Linear_Weights_Mappings.png')
 
 
 def plot_training(
@@ -235,98 +388,14 @@ def plot_training(
     outputs : ndarray
         Reconstructions
     """
-    x_data = load_x_data(spectra.shape[-1])
-
-    # Initialize reconstructions plots
-    _, axes = plt.subplots(2, 2, figsize=(24, 12), sharex='col', gridspec_kw={
-        'top': 0.92,
-        'bottom': 0.07,
-        'left': 0.08,
-        'right': 0.99,
-        'hspace': 0.05,
-        'wspace': 0.15,
-    })
-
-    axes = axes.flatten()
-
-    # Plot reconstructions
-    for spectrum, output, axis in zip(spectra, outputs, axes):
-        main_axis = _plot_reconstructions(x_data, spectrum, output, axis)
-
-    plt.figtext(0.5, 0.02, 'Energy (keV)', ha='center', va='center', fontsize=MAJOR)
-    plt.figtext(
-        0.02,
-        0.5,
-        'Scaled Log Counts',
-        ha='center',
-        va='center',
-        rotation='vertical',
-        fontsize=MAJOR,
-    )
-
-    labels = np.hstack((main_axis.get_legend_handles_labels(), axes[0].get_legend_handles_labels()))
-    legend = plt.figlegend(
-        *labels,
-        loc='lower center',
-        ncol=3,
-        bbox_to_anchor=(0.5, 0.92),
-        fontsize=MAJOR,
-        markerscale=2,
-        columnspacing=10,
-    )
-    legend.get_frame().set_alpha(None)
-
-    plt.savefig(f'{plots_dir}{prefix}_Reconstructions.png', transparent=False)
+    # Plot reconstructions if output is spectra reconstructions
+    if spectra.shape[1] == outputs.shape[1]:
+        _plot_reconstructions(spectra, outputs)
+        plt.savefig(f'{plots_dir}{prefix}_Reconstructions.png', transparent=False)
 
     # Plot loss over epochs
     _plot_loss(losses[0], losses[1])
     plt.savefig(f'{plots_dir}{prefix}_Loss.png', transparent=False)
-
-
-def plot_param_distribution(
-        plots_dir: str,
-        param_names: list[str],
-        params: ndarray,
-        loader: DataLoader):
-    """
-    Plots histogram of each parameter for both true and predicted
-
-    Parameters
-    ----------
-    plots_dir : string
-        Directory to plots
-    param_names : list[string]
-        Names for each parameter
-    params : Tensor
-        Parameter predictions from CNN
-    loader : DataLoader
-        PyTorch DataLoader that contains data to train
-    """
-    log_params = loader.dataset.dataset.log_params
-    param_transform = loader.dataset.dataset.transform[1]
-    params_real = loader.dataset.dataset.params.cpu().numpy()
-    # param_names = ['nH', r'$\Gamma', 'FracSctr', r'$T_{max}$', 'Norm']
-
-    _, axes = plt.subplot_mosaic('AABBCC;DDDEEE', figsize=(16, 9))
-
-    params[:, log_params] = np.log10(params[:, log_params])
-    params = list(np.rollaxis(params, axis=1))
-    params_real = params_real * param_transform[1] + param_transform[0]
-    params_real = list(np.rollaxis(params_real, axis=1))
-
-    # Plot subplots
-    for i, (title, axis) in enumerate(zip(param_names, axes.values())):
-        twin_axis = _plot_histogram(title, params_real[i], params[i], axis)
-
-    legend = plt.figlegend(
-        axes['A'].get_legend_handles_labels()[0] + twin_axis.get_legend_handles_labels()[0],
-        axes['A'].get_legend_handles_labels()[1] + twin_axis.get_legend_handles_labels()[1],
-        fontsize=MAJOR,
-        bbox_to_anchor=(0.95, 0.45),
-    )
-    legend.get_frame().set_alpha(None)
-    plt.tight_layout()
-    plt.savefig(f'{plots_dir}Param_Distribution')
 
 
 def plot_difference(

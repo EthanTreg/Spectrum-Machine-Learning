@@ -1,14 +1,16 @@
 """
 Normalises and bins spectra and can perform background augmentation and synthetic splicing
 """
-from time import time
+import pickle
 import multiprocessing as mp
+from time import time
 
 import numpy as np
 from numpy import ndarray
 
-from fspnet.utils.preprocessing import correct_spectrum
+from fspnet.utils.preprocessing import correct_spectrum_file
 from fspnet.utils.utils import progress_bar, file_names, open_config
+from fspnet.utils.multiprocessing import check_cpus
 
 
 def _worker(
@@ -17,7 +19,6 @@ def _worker(
         spectra_paths: ndarray,
         counter: mp.Value,
         queue: mp.Queue,
-        aug_count: int = 0,
         background_dir: str = '',
         cut_off: list = None):
     """
@@ -35,8 +36,6 @@ def _worker(
         Number of spectra processed
     queue : Queue
         Multiprocessing queue to add spectra to
-    aug_count : integer, default = 0
-        Number of augmentations to perform
     background_dir : string, default = ''
         Path to the root directory where the background is located
     cut_off : list, default = [0.3, 10]
@@ -45,12 +44,11 @@ def _worker(
     spectra = []
 
     for spectrum_path in spectra_paths:
-        spectra.extend(correct_spectrum(
+        spectra.append(correct_spectrum_file(
             spectrum_path,
             background_dir,
-            aug_count=aug_count,
             cut_off=cut_off,
-        )[-1])
+        )[-2:])
 
         # Increase progress
         with counter.get_lock():
@@ -63,7 +61,7 @@ def _worker(
 
 def preprocess(config_path: str = '../config.yaml'):
     """
-    Preprocess spectra and save to file
+    Preprocess spectra from fits files and save to numpy file
 
     Parameters
     ----------
@@ -71,38 +69,34 @@ def preprocess(config_path: str = '../config.yaml'):
         File path to the configuration file
     """
     # If run by command line, optional argument can be used
-    _, config = open_config(1, config_path)
+    _, config = open_config('data-preprocessing', config_path)
 
     # Initialize variables
-    aug_count = config['augmentation']['augmentation_number']
+    cpus = config['preprocessing']['cpus']
     data_dir = config['data']['spectra-directory']
     background_dir = config['data']['background-directory']
-    params_path = config['data']['parameters-path']
     names_path = config['data']['names-path']
     processed_path = config['output']['processed-path']
 
     # Constants
-    params = None
     blacklist = ['bkg', '.bg', '.rmf', '.arf']
-    cpus = mp.cpu_count()
     initial_time = time()
     processes = []
     counter = mp.Value('i', 0)
     queue = mp.Queue()
 
+    cpus = check_cpus(cpus)
+
     # Fetch spectra names and parameters
-    if names_path:
-        spectra_files = np.char.add(data_dir, np.load(names_path))
+    if names_path and '.pickle' in names_path:
+        with open(names_path, 'rb') as file:
+            spectra_files = pickle.load(file)['names']
+
+        spectra_files = np.char.add(data_dir, spectra_files)
+    elif '.npy' in names_path:
+        spectra_files = np.load(names_path)
     else:
         spectra_files = np.char.add(data_dir, file_names(data_dir, blacklist=blacklist))
-
-    if params_path:
-        params = np.load(params_path)
-
-    # Duplicate parameters if provided and augmentation is used
-    if aug_count and params:
-        params = np.repeat(params, aug_count + 1, axis=0)
-        np.save(processed_path.replace('spectra', 'params'), params)
 
     # Create worker jobs
     spectra_groups = np.array_split(spectra_files, cpus)
@@ -118,7 +112,7 @@ def preprocess(config_path: str = '../config.yaml'):
                 counter,
                 queue,
             ),
-            kwargs={'aug_count': aug_count, 'background_dir': background_dir}
+            kwargs={'background_dir': background_dir}
         ))
 
     # Start multiprocessing

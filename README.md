@@ -32,8 +32,11 @@
 * Install dependencies:  
 `pip install -r requirements.txt`  
 * PyTorch's dependencies[^1]:  
-NVIDIA GPU with CUDA Toolkit ~= v11.6
-[^1]: Only required for use with NVIDIA GPU
+  NVIDIA GPU with [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) ~= v11.6
+  [^1]: Only required for use with NVIDIA GPU
+* PyXspec dependency[^2]:  
+  Xspec from [HEASoft](https://heasarc.gsfc.nasa.gov/lheasoft/install.html) provided by NASA
+  [^2]: Only required if using `synthesize_spectra.py` or `spectrum_fit.py`&rarr;`pyxspec_test`
 
 ## 2 Information
 
@@ -77,13 +80,15 @@ so feel free to adapt it and train it to different use cases.
 ## 3 How to Use
 
 There is a configuration file, `config.yaml` that has several variables that can be changed.
-There are 4 sections within `config.yaml` denoted by `---`:
-* `spectrum_fit.py config file` - Main autoencoder script
-* `data_preprocessing.py config file` - Data preprocessing script
-* `synthesize_spectra.py config file` - Synthesising synthetic spectra script
-* `network_optimizer.py config file` - Network optimisation script
+There are 5 sections within `config.yaml`:
+* `global-variables` - Variables shared across different scripts
+* `spectrum-fit` - Main autoencoder script for `spectrum_fit.py`
+* `data-preprocessing` - Data preprocessing script for `data_preprocessing.py`
+* `synthesize-spectra` - Synthesising synthetic spectra script for `synthesize_spectra.py`
+* `network-optimizer` - Network optimisation script for `network_optimizer.py`
 
-These sections will be referenced throughout this `README`.
+These sections will be referenced throughout this `README`.  
+Some parameters found in each section may be set under `global-variables`.
 
 All file paths can be absolute or relative.
 
@@ -96,8 +101,8 @@ Therefore, weights are provided if this is the desired model for parameter predi
 
 To generate parameters on a dataset, first make sure that data has been **properly preprocessed**.  
 * The network is designed for an input spectrum of **size 240**.  
-* All spectra **must be saved** as a `.npy` file of **dimensions** $n \times 2 \times 240$,
-  where the second dimension corresponds to the spectrum and the uncertainty.  
+* All spectra **must be saved** in a `.pickle` file
+  as a numpy array of **dimensions** $n \times 240$ in a dictionary with the key `spectra`
 * The network is designed for the data to be **pre-normalised**;
   however, the network may still perform well or require retraining, pre-processing follows:
   1. Divide spectrum and background by their respective exposure time
@@ -114,7 +119,7 @@ modules from `data_preprocessing.py` can be used to perform all the necessary pr
 If your data doesn't meet the requirements above,
 `data_preprocessing.py` can produce the necessary data type.
 
-1. Set data paths in `data_preprocessing.py config file`:
+1. Set data paths in `data-preprocessing`:
    * `spectra-directory`: _spectra fits files path_
    * `background-directory`: _background fits files path
      \+ background path in spectra fits file_
@@ -122,12 +127,11 @@ If your data doesn't meet the requirements above,
    * Other settings are optional to change
 2. Run `python3 -m fspnet.data_preprocessing` from the root directory
    or import using `from fspnet.data_preprocessing import preprocess`  
-   The config file path can be added as an argument, default is `../config.yaml`
+   The config file path can be added as an optional argument, default is `../config.yaml`
 
 #### 3.1.3 Network Configuration
 
-To configure the network, first check the settings under the first section
-`spectrum_fit_cnn.py config file`:
+To configure the network, first check the settings under `spectrum-fit`:
 * `training` options:
   * `encoder-load`: 1
   * `encoder-name`: 'Encoder V3'
@@ -144,14 +148,14 @@ All other options should be fine as defaults or aren't required.
 There are two methods to fit data:
 * Run `spectrum_fit.py`: Provides several analysis results;
   however, this makes it slower and more configuration settings are required,
-  this is **not recommended**
+  this is **not recommended**, but is useful to see how functions can be used
 * Import `from fspnet.spectrum_fit import predict_parameters`:
   Fast, integrates with code and is the **recommended approach**
 
 Both approaches take the optional argument the configuration file path with the default of
 `../config.yaml`.  
 Both approaches also output the predicted parameters to
-`spectrum_fit.py config file`&rarr;`output`&rarr;`parameter-predictions-path`.  
+`spectrum-fit`&rarr;`output`&rarr;`parameter-predictions-path`.  
 The output file contains the spectrum name or file number,
 and the predicted values for the free parameters as a `.csv` file.
 
@@ -170,41 +174,33 @@ by training the network as an autoencoder.
 Synthetic spectra is generated using Xspec with the model that you want to fit.  
 This can be done independently; however, the data needs to meet the requirements as mentioned in
 [Data Requirements](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#311-data-requirements).  
-Alternatively, the script `synthesize_spectra.py` can be used to generate the spectra for you.  
+Alternatively, the script `synthesize_spectra.py` can be used to generate the spectra for you.
 
-**WARNING**: due to string character limits in fits files, if any paths are too long,
-they will get truncated, preventing files from being opened correctly.  
-**WARNING**: Script can freeze mid-way through generating spectra, currently the cause is unknown.
-If this happens, delete all files that were created from that batch, and resume progress.
-To make finding the files to delete easier,
-set the `synthetic-number` to a power of 10 as the data to delete won't begin with a 0.
-
-1. Configure settings in `synthesize_spectra.py config file`:
+1. Configure settings in `synthesize-spectra`:
    * `synthesize` options:
      * `synthetic-number`: _recommended 100,000_, the more, the better, but the slower the training
-     * `spectra-per-batch`: _recommended 100_, script can freeze,
-       resulting in loss of progress for the current batch
    * `data` options:
      * `spectra-directory`: _real spectra fits files path_
      * `names-path`: _spectra names file path_, not required,
        leave empty if this doesn't exist
    * `model`:
+     * `parameters-number`: _number of free parameters_
      * `model-name`: _Xspec name of the model_
      * `custom-model-name`: _Xspec name of custom model to be imported_
-     * `model-directory`: _Custom model directory path_
+     * `model-directory`: _custom model directory path_
+     * `log-parameters`: _list of indices of logged parameters_,
+       index **starts from 0**
+     * `parameter-limits`: _list of dictionaries of free parameter limits_,
+       dictionary must contain the upper and lower limit to sample from
      * `fixed-parameters`: _dictionary of index and value for fixed parameters_,
        index **starts from 1**
-     * `parameter-limits`: _list of dictionaries of free parameter limits_,
-       dictionary must contain parameter index, upper and lower limit to sample from,
-       and if it should be sampled from logarithmic space
    * `output`:
-     * `synthetic-directory`: _path to save synthetic spectra fits files_
-     * `synthetic-data`: _path to save synthetic spectra file_
+     * `synthetic-path`: _path to save synthetic spectra file_
 2. Run `synthesize_spectra.npy`, can be provided with optional configuration file path argument,
-   default is `./config.yaml`
+   default is `../config.yaml`
 
-`synthesize_spectra.py` with generate synthetic spectra fits files and background files,
-as well as a `.npy` file containing the preprocessed spectral data for use in training.
+`synthesize_spectra.py` will generate a `.pickle` file containing
+the preprocessed spectral data, parameters and uncertainties for use in training.
 
 #### 3.2.2 Training the Autoencoder
 
@@ -218,18 +214,17 @@ There are two methods to train the autoencoder:
 
 The following steps assumes you are using the recommended method.
 
-1. Configure settings in `spectrum_fit.py config file`:
+1. Configure settings in `spectrum-fit`:
     * `training` options:
       * `decoder-save`: 2
       * `encoder-save`: 2
       * `decoder-load`: 0
       * `encoder-load`: 0
-      * `epochs`: _recommended 200_, more is better, but takes longer and has diminishing returns
+      * `epochs`: _recommended 100_, more is better, but takes longer and has diminishing returns
       * `network-configs-directory`: `'../network_configs/'`,
       make sure this directory exists/is correct and contains the file `Encoder V3.json`
     * `data` options:
       * `decoder-data-path`: _synthetic spectra file path_
-      * `decoder-parameters-path`: _synthetic parameters path_
       * `encoder-data-path`: _spectra path_
     * `model` options:
       * `parameters-number`: _number of free parameters in the model_
@@ -241,10 +236,11 @@ The following steps assumes you are using the recommended method.
       * `log-parameters`: _list of **free** parameter with indices **starting from 0**_,
         used for any parameter that spans a large range,
         doesn't have to be the same as used for generating synthetic spectra
-      * `fix-parameters`: _2D list of index-value pairs with indices **starting from 1**_
+      * `fixed-parameters`: _dictionary of index and value for fixed parameters_,
+        index **starts from 1**
     * `output` options:
       * `network-states-directory`: _path to save network training progress_
-2. Load `config.yaml` by calling `open_config` with the parameters _idx_ and _config_path_,
+2. Load `config.yaml` by calling `open_config` with the parameters _key_ and _config_path_,
    this will return the configuration path (not needed) and dictionary (`config`), 
 3. Retrieve the following variables from `config`:
     * `epochs = config['training']['epochs']`
@@ -276,7 +272,7 @@ from fspnet.utils.utils import open_config
 config_path = './config.yaml'
 
 # Open configuration file
-_, config = open_config(0, config_path)
+_, config = open_config('spectrum-fit', config_path)
 
 # Load parameters
 epochs = config['training']['epochs']
@@ -326,9 +322,6 @@ Every script directly under fspnet can be run via the command line using the com
 All have the optional argument `--config_path`, which is the path to the configuration file,  
 default is `../config.yaml`.
 
-`spectrum_fit.py` can take tha additional optional argument `--tests`,
-which determines if PyXspec tests should be used, default is True.
-
 ## 4 Analysis Tools
 
 There are several functions included that can help with training the network and
@@ -371,7 +364,7 @@ To get the predictions, the function `predict_parameters` from `fspnet.spectrum_
 can be used as mentioned in
 [Fitting the Data](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#314-fitting-the-data).
 
-In addition to this, several parameters in `spectrum_fit.py config file` need configuring:
+In addition to this, several parameters in the `spectrum-fit` config file need configuring:
 * `data` options:
     * `encoder-parameters-path`: _path to the fitted parameters_
 * 'model' options:
@@ -389,7 +382,7 @@ param_names = config['model']['parameter-names']
 
 e_loaders = initialization(...)[2]
 
-params = predict_parameters(config=config)
+predict_parameters(config=config)
 comparison_output = param_comparison(config=config)
 
 plot_param_comparison(
@@ -399,9 +392,8 @@ plot_param_comparison(
 )
 plot_param_distribution(
     plots_dir,
-    param_names,
-    params[:, 1:].astype(float),
-    e_loaders[1],
+    [config['data']['encoder-data-path'], config['output']['parameter-predictions-path']],
+    config,
 )
 ```
 
@@ -443,7 +435,7 @@ therefore, the more CPU cores, the faster this process will be.
 The function will create a `.csv` file that will have
 the spectrum name/number, predicted parameters and PGStat. 
 The directory location is specified in
-`spectrum_fit.py config file`&rarr;`output`&rarr;`worker-directory`  
+`spectrum-fit`&rarr;`output`&rarr;`worker-directory`  
 The function will also return the median PGStat and predicted parameters.
 
 **Example code**:
@@ -495,38 +487,60 @@ Going from 3D to 2D, `reshape` will use `output = [-1]`
 **Layer Types**  
 `layers` has several options, each with their own options:
 * `linear`: Linear with SELU:
-    * `factor`: float, output size equals `factor` $\times$ _network output size_
-    * `features`: integer, output size
-    * `dropout`: optional boolean, default = false, probability equals `dropout_prob`
+    * `factor`: optional float, _output size_ = `factor` $\times$ _network output size_,
+      will be used if provided, else `features` will be used
+    * `features`: optional integer, output size, won't be used if `factor` is provided
+    * `dropout`: boolean, default = False, probability equals `dropout_prob`
+    * `activation`: boolean, default = True, if a SELU activation should be used
 * `convolutional`: Convolution with same padding using replicate,
   dropout and ELU:
     * `filters`: integer, number of convolutional filters
-    * `kernel`: optional integer, default = 3, kernel size
-    * `batch_norm`: optional boolean, default = false, batch normalisation
+    * `dropout`: boolean, default = True, probability equals `dropout_prob`
+    * `batch_norm`: boolean, default = False, batch normalisation
+    * `activation`: boolean, default = True, if an ELU activation should be used
+    * `kernel`: integer, default = 3, kernel size
+    * `stride`: integer, default = 1, stride of the kernel
+    * `padding`: integer or string, default = 'same',
+      input padding, can an integer or _same_ where _same_ preserves the input shape
 * `gru`: Gated recurrent unit (GRU) with ELU and dropout if parameter `layers` > 1:
-    * `layers`: optional integer, default = 2, number of GRU layers
-    * `factor`: optional float, default = 1, 
+    * `dropout`: boolean, default = True, probability equals `dropout_prob`
+    * `activation`: boolean, default = True, if an ELU activation should be used
+    * `layers`: integer, default = 2, number of GRU layers
+    * `factor`: float, default = 1, 
       output size equals `factor` $\times$ _layer input size_
+    * `bidirectional`: string, default = None,
+      if a bidirectional GRU should be used and method for combining the two directions,
+      can be _sum_, _mean_ or _concatenation_
 * `linear_upscale`: Scales the layer input by two using a linear layer,
   **input and output is 3D**, uses SELU
 * `conv_upscale`: Scales the layer input by two using convolution and pixel shuffle,
   so `filters` **must** be a multiple of two, uses kernel size of 3 and same padding
     * `filters`: integer, must be a multiple of two as $C_{out} = C_{in} / 2$
-    * `batch_norm`: optional boolean, default = false, batch normalisation
-    * `activation`: optional boolean, default = true, ELU activation
+    * `batch_norm`: boolean, default = false, batch normalisation
+    * `activation`: boolean, default = true, ELU activation
+    * `kernel`: integer, default = 3, kernel size
 * `conv_transpose`: Scales the layer input by two using transpose convolution,
   uses kernel size of 2 and stride 2, uses ELU and dropout
     * `filters`: integer, number of convolutional filters
+    * `dropout`: boolean, default = True, probability equals `dropout_prob`
+    * `batch_norm`: boolean, default = False, batch normalisation
+    * `activation`: boolean, default = True, if an ELU activation should be used
 * `upsample`: Linear interpolation scales layer input by two
 * `conv_depth_downscale`: Reduces $C$ to one, uses kernel size of 1, same padding and ELU
+    * `batch_norm`: boolean, default = False, batch normalisation
+    * `activation`: boolean, default = True, if an ELU activation should be used
 * `conv_downscale`: Downscales the layer input by two through strided convolution,
   uses kernel size of 2, padding of 1 using replicate and stride 2, uses ELU and dropout
     * `filters`: integer, number of convolutional filters
-    * `batch_norm`: optional boolean, default = false, batch normalisation
+    * `dropout`: boolean, default = True, probability equals `dropout_prob`
+    * `batch_norm`: boolean, default = False, batch normalisation
+    * `activation`: boolean, default = True, if an ELU activation should be used
 * `pool`: Downscales the layer input by two using max pooling
 * `reshape`: Reshapes the dimensions
-    * `output`: (integer, integer) or (integer), dimensions of the output of the layer,
+    * `output`: integer or tuple[integer, integer], dimensions of the output of the layer,
       ignoring the first dimension of $N$
+* `extract`: Extracts values from the previous layer to pass to the output
+    * `number`: integer, number of values to extract from the previous layer
 * `concatenate`: Concatenates the previous layer with a specified layer
     * `layer`: integer, layer index to concatenate the previous layer with
 * `shortcut`: Adds the previous layer with the specified layer
@@ -548,7 +562,7 @@ and convolutional layers in two parts in the network are supported.
 The function `optimize_network` can be imported to integrate network optimisation.  
 `optimize_network` returns a dictionary containing the parameters from the best trial.
 
-Several parameters in `network_optimizer.py config file` need configuring:
+Several parameters in the `network-optimizer` config file need configuring:
 * `optimization` options:
     * `name`: _name of the network to optimize_
 * `output` options:

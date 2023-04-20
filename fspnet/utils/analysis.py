@@ -1,13 +1,16 @@
 """
 Calculates the saliency of decoders or autoencoders using backpropagation
 """
+import re
+import pickle
+
 import torch
 import numpy as np
 from numpy import ndarray
 from torch.utils.data import DataLoader
 
 from fspnet.utils.network import Network
-from fspnet.utils.utils import open_config, file_names
+from fspnet.utils.utils import open_config
 
 
 def autoencoder_saliency(
@@ -39,7 +42,9 @@ def autoencoder_saliency(
     spectra = next(iter(loader))[0][:8].to(device)
 
     # Initialization
-    encoder.train()
+    torch.backends.cudnn.enabled = False
+    encoder.eval()
+    decoder.eval()
     spectra.requires_grad_()
 
     # Calculate saliency through backpropagation
@@ -47,6 +52,7 @@ def autoencoder_saliency(
     loss = torch.nn.MSELoss()(output, spectra)
     loss.backward()
     saliency = spectra.grad.data.abs().cpu()
+    torch.backends.cudnn.enabled = True
 
     return spectra.detach().cpu().numpy(), output.detach().cpu().numpy(), saliency.numpy()
 
@@ -66,28 +72,35 @@ def decoder_saliency(loader: DataLoader, device: torch.device, decoder: Network)
         Decoder half of the network
     """
     # Constants
-    d_spectra, d_parameters, *_ = next(iter(loader))
+    saliency = []
 
     # Initialization
-    decoder.train()
-    d_spectra = d_spectra.to(device)
-    d_parameters = d_parameters.to(device)
-    d_parameters.requires_grad_()
+    torch.backends.cudnn.enabled = False
+    decoder.eval()
 
-    # Calculate saliency through backpropagation
-    d_output = decoder(d_parameters)
-    d_loss = torch.nn.MSELoss()(d_output, d_spectra)
-    d_loss.backward()
-    d_saliency = d_parameters.grad.data.abs().cpu()
+    for spectra, params, *_ in loader:
+        spectra = spectra.to(device)
+        params = params.to(device)
+        params.requires_grad_()
+
+        # Calculate saliency through backpropagation
+        output = decoder(params)
+        torch.zeros([1, output.size(-1)])
+        loss = torch.nn.MSELoss()(output, spectra)
+        loss.backward()
+        saliency.append(params.grad.data.abs())
+
+    torch.backends.cudnn.enabled = True
 
     # Measure impact of input parameters on decoder output
-    parameter_saliency = torch.mean(d_saliency, dim=0)
-    parameter_impact = parameter_saliency / torch.min(parameter_saliency)
-    parameter_std = torch.std(d_saliency, dim=0) / torch.min(parameter_saliency)
+    saliency = torch.cat(saliency).cpu()
+    saliency_params = torch.mean(saliency, dim=0)
+    params_impact = saliency_params / torch.min(saliency_params)
+    params_std = torch.std(saliency, dim=0) / torch.min(saliency_params)
 
     print(
-        f'\nParameter impact on decoder:\n{parameter_impact.tolist()}'
-        f'\nParameter spread:\n{parameter_std.tolist()}\n'
+        f'\nParameter impact on decoder:\n{params_impact.tolist()}'
+        f'\nSaliency spread:\n{params_std.tolist()}\n'
     )
 
 
@@ -105,22 +118,24 @@ def param_comparison(config: dict | str = '../config.yaml') -> tuple[ndarray, nd
     tuple[ndarray, ndarray]
         Target parameters and parameter predictions
     """
-    blacklist = ['bkg', '.bg', '.rmf', '.arf']
-    _, config = open_config(0, config)
+    if isinstance(config, str):
+        _, config = open_config('spectrum-fit', config)
 
     # Load config parameters
-    names_path = config['data']['encoder-names-path']
-    target_path = config['data']['encoder-parameters-path']
+    data_path = config['data']['encoder-data-path']
     prediction_path = config['output']['parameter-predictions-path']
     log_params = config['model']['log-parameters']
 
-    if names_path:
-        spectra_names = np.load(names_path)
-    else:
-        spectra_names = file_names(config['data']['spectra-directory'], blacklist=blacklist)
+    with open(data_path, 'rb') as file:
+        data = pickle.load(file)
 
-    target = np.load(target_path)
+    target = np.array(data['params'])
     predictions = np.loadtxt(prediction_path, delimiter=',', dtype=str)
+
+    if 'names' in data:
+        spectra_names = np.array(data['names'])
+    else:
+        spectra_names = np.arange(target.shape[0], dtype=float).astype(str)
 
     # Sort target spectra by name
     sort_idx = np.argsort(spectra_names)
@@ -131,7 +146,55 @@ def param_comparison(config: dict | str = '../config.yaml') -> tuple[ndarray, nd
     target_idx = np.searchsorted(spectra_names, predictions[:, 0])
     target = target[target_idx]
     predictions = predictions[:, 1:].astype(float)
-    target[:, log_params] = np.log10(target[:, log_params])
-    predictions[:, log_params] = np.log10(predictions[:, log_params])
+
+    if log_params:
+        target[:, log_params] = np.log10(target[:, log_params])
+        predictions[:, log_params] = np.log10(predictions[:, log_params])
 
     return target, predictions
+
+
+def linear_weights(network: Network) -> ndarray:
+    """
+    Returns the mapping of the weights from the lowest dimension
+    to a high dimension for the 3 smallest linear layers
+
+
+    If the low dimension is 5 and the high dimension is 240,
+    with two hidden dimensions of 60 and 120, then the output will be 5x240
+    where each row is the strength of the input on each output
+    calculated by the multiplication of every weight that comes from the input
+    and connects to the output
+
+    Parameters
+    ----------
+    network : Network
+        Network to learn the mapping for
+
+    Returns
+    -------
+    ndarray
+        Mapping of low dimension to high dimension
+    """
+    weights = []
+    param_weights = []
+
+    # Get all linear weights in the network
+    for name, param in network.named_parameters():
+        if re.search(r'.*linear_\d.weight', name):
+            weights.append(param)
+
+    weights_idx = np.argsort([weight.numel() for weight in weights])
+    weights = [weights[idx].detach().cpu().numpy() for idx in weights_idx]
+
+    for weights_1l in np.swapaxes(weights[0], 1, 0):
+        weights_i = []
+        weights_1l = np.repeat(weights_1l[np.newaxis], weights[1].shape[0], axis=0)
+
+        for weights_3i in weights[2]:
+            weights_3i = np.repeat(weights_3i[:, np.newaxis], weights[1].shape[1], axis=1)
+            weights_i.append(np.sum(weights_1l * weights_3i * weights[1]))
+
+        param_weights.append(weights_i)
+
+    return np.array(param_weights)

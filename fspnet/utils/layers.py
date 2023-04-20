@@ -52,30 +52,33 @@ class GRUOutput(nn.Module):
 
     Attributes
     ----------
-    bidirectional : boolean
-        If GRU is bidirectional
-    method : string, default = None
-        If GRU is bidirectional, how to handle output.
-        Can be either sum, mean or None. If None, concatenation is used
+    bidirectional : string, default = None
+        If GRU is bidirectional, and if so, what method to use,
+        can be either mean, sum or concatenation,
+        if None, GRU is mono-directional and concatenate will be used
 
     Methods
     -------
     forward(x)
         Returns
     """
-    def __init__(self, bidirectional: bool, method: str = None):
+    def __init__(self, bidirectional: str = None):
         """
         Parameters
         ----------
-        bidirectional : bool
-            If GRU is bidirectional
-        method : string, default = None
-            If GRU is bidirectional, how to handle output.
-            Can be either sum, mean or None. If None, concatenation is used
+        bidirectional : string, default = None
+            If GRU is bidirectional, and if so, what method to use,
+            can be either mean, sum or concatenate,
+            if None, GRU is mono-directional and concatenation will be used
         """
         super().__init__()
+        self.options = [None, 'sum', 'mean', 'concatenate']
         self.bidirectional = bidirectional
-        self.method = method
+
+        if self.bidirectional not in self.options:
+            raise ValueError(
+                f'{self.bidirectional} is not a valid bidirectional method, options: {self.options}'
+            )
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -94,13 +97,14 @@ class GRUOutput(nn.Module):
         output = x[0]
 
         if self.bidirectional:
-            output = output.view(*output.size()[:2], -1, 2)
+            output = output.view(*output.size()[:2], 2, -1)
 
-            if self.method == 'sum':
-                output = torch.sum(output, dim=-1)
-            elif self.method == 'mean':
-                output = torch.mean(output, dim=-1)
-
+            if self.bidirectional == self.options[1]:
+                output = torch.sum(output, dim=-2)
+            elif self.bidirectional == self.options[2]:
+                output = torch.mean(output, dim=-2)
+            elif self.bidirectional == self.options[3]:
+                output = torch.cat([output[..., 0, :], output[..., 1, :]], dim=1)
         return output
 
 
@@ -154,6 +158,32 @@ class PixelShuffle1d(nn.Module):
         return x
 
 
+def _optional_layer(
+        default: bool,
+        arg: str,
+        kwargs: dict,
+        layer: dict,
+        layer_func: nn.Module):
+    """
+    Implements an optional layer for a parent layer to use
+
+    Parameters
+    ----------
+    default : boolean
+        If the layer should be used by default
+    arg : string
+        Argument for the user to call this layer
+    kwargs : dictionary
+        kwargs dictionary used by the parent
+    layer : dictionary
+        layer dictionary used by the parent
+    layer_func : Module
+        Optional layer to add to the network
+    """
+    if (arg in layer and layer[arg]) or (arg not in layer and default):
+        kwargs['module'].add_module(f"{type(layer_func).__name__}_{kwargs['i']}", layer_func)
+
+
 def linear(kwargs: dict, layer: dict) -> dict:
     """
     Linear layer constructor
@@ -161,12 +191,29 @@ def linear(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), data size (data_size),
-        dimension list (dims) & sequential module (module).
-        Must contain output_size if layer uses factor rather than features
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
+        output_size : integer, optional
+            Size of the network's output, required only if layer contains factor and not features;
+        dropout_prob : float, optional
+            Probability of dropout if dropout from layer is True;
     layer : dictionary
-        Must contain either factor of output size or features.
-        Can contain dropout (dropout) if dropout is to be used, else dropout is not used
+        factor : float, optional
+            Output features is equal to the factor of the network's output,
+            will be used if provided, else features will be used;
+        features : integer, optional
+            Number of output features for the layer,
+            if output_size from kwargs and factor is provided, features will not be used;
+        dropout : boolean, default = False
+            If dropout should be used;
+        activation : boolean, default = True
+            If SELU activation should be used;
 
     Returns
     -------
@@ -182,17 +229,9 @@ def linear(kwargs: dict, layer: dict) -> dict:
     linear_layer = nn.Linear(in_features=kwargs['dims'][-2], out_features=kwargs['dims'][-1])
     kwargs['module'].add_module(f"linear_{kwargs['i']}", linear_layer)
 
-    # Optional batch normalization layer
-    try:
-        if layer['dropout']:
-            kwargs['module'].add_module(
-                f"dropout_{kwargs['i']}",
-                nn.Dropout1d(kwargs['dropout_prob'])
-            )
-    except KeyError:
-        pass
-
-    kwargs['module'].add_module(f"SELU_{kwargs['i']}", nn.SELU())
+    # Optional layers
+    _optional_layer(False, 'dropout', kwargs, layer, nn.Dropout1d(kwargs['dropout_prob']))
+    _optional_layer(True, 'activation', kwargs, layer, nn.SELU())
 
     # Data size equals number of nodes
     kwargs['data_size'] = kwargs['dims'][-1]
@@ -207,51 +246,69 @@ def convolutional(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), dropout probability (dropout_prob),
-        dimension list (dims), sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
+        dropout_prob : float, optional
+            Probability of dropout, not required if dropout from layer is False;
     layer : dictionary
-        Must contain number of filters (filters).
-        Can contain kernel size (kernel), else 3 is used
-        and/or batch normalisation (batch_norm) else it isn't used
+        filters : integer
+            Number of convolutional filters;
+        dropout : boolean, default = True
+            If dropout should be used;
+        batch_norm : boolean, default = False
+            If batch normalisation should be used;
+        activation : boolean, default = True
+            If ELU activation should be used;
+        kernel : integer, default = 3
+            Size of the kernel;
+        stride : integer, default = 1
+            Stride of the kernel;
+        padding : integer | string, default = 'same'
+            Input padding, can an integer or 'same' where 'same' preserves the input shape;
 
     Returns
     -------
     dictionary
         Returns the input kwargs with any changes made by the function
     """
+    kernel_size = 3
+    stride = 1
+    padding = 'same'
     kwargs['dims'].append(layer['filters'])
 
-    # Kernel size is optional with a default of 3
-    try:
+    # Optional parameters
+    if 'kernel' in layer:
         kernel_size = layer['kernel']
-    except KeyError:
-        kernel_size = 3
+
+    if 'stride' in layer:
+        stride = layer['stride']
+
+    if 'padding' in layer:
+        padding = layer['padding']
 
     conv = nn.Conv1d(
         in_channels=kwargs['dims'][-2],
         out_channels=kwargs['dims'][-1],
         kernel_size=kernel_size,
-        padding='same',
+        stride=stride,
+        padding=padding,
         padding_mode='replicate',
     )
-
     kwargs['module'].add_module(f"conv_{kwargs['i']}", conv)
-    kwargs['module'].add_module(
-        f"dropout_{kwargs['i']}",
-        nn.Dropout1d(kwargs['dropout_prob'])
-    )
 
-    # Optional batch normalization layer
-    try:
-        if layer['batch_norm']:
-            kwargs['module'].add_module(
-                f"batch_norm_{kwargs['i']}",
-                nn.BatchNorm1d(kwargs['dims'][-1])
-            )
-    except KeyError:
-        pass
+    # Optional layers
+    _optional_layer(True, 'dropout', kwargs, layer, nn.Dropout1d(kwargs['dropout_prob']))
+    _optional_layer(False, 'batch_norm', kwargs, layer, nn.BatchNorm1d(kwargs['dims'][-1]))
+    _optional_layer(True, 'activation', kwargs, layer, nn.ELU())
 
-    kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
+    if padding != 'same':
+        kwargs['data_size'] = int((kwargs['data_size'] + 2 * padding - kernel_size) / stride + 1)
 
     return kwargs
 
@@ -263,10 +320,28 @@ def gru(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), data size (data_size),
-        sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
+        dropout_prob : float, optional
+            Probability of dropout, only required if layers from layer > 1;
     layer : dictionary
-        Can contain the number of layers (layers), else 2 is used
+        dropout : boolean, default = True
+            If dropout should be used;
+        activation : boolean, default = True
+            If ELU activation should be used;
+        layers : integer, default = 2
+            Number of stacked GRU layers;
+        factor : float, default = 1
+            Output size of the layer depending on the network's output size;
+        bidirectional : string, default = None
+            If a bidirectional GRU should be used and method for combining the two directions,
+            can be sum, mean or concatenation;
 
     Returns
     -------
@@ -283,7 +358,19 @@ def gru(kwargs: dict, layer: dict) -> dict:
     except KeyError:
         factor = 1
 
-    if layers > 1:
+    try:
+        bidirectional = layer['bidirectional']
+
+        if bidirectional == 'None':
+            bidirectional = None
+            kwargs['dims'].append(kwargs['dims'][-1])
+        elif bidirectional == 'concatenate':
+            kwargs['dims'].append(kwargs['dims'][-1] * 2)
+    except KeyError:
+        bidirectional = None
+        kwargs['dims'].append(kwargs['dims'][-1])
+
+    if layers > 1 and (('dropout' in layer and layer['dropout']) or 'dropout' not in layer):
         dropout_prob = kwargs['dropout_prob']
     else:
         dropout_prob = 0
@@ -294,14 +381,16 @@ def gru(kwargs: dict, layer: dict) -> dict:
         num_layers=layers,
         batch_first=True,
         dropout=dropout_prob,
+        bidirectional=bidirectional is not None,
     )
 
     kwargs['module'].add_module(f"GRU_{kwargs['i']}", gru_layer)
     kwargs['module'].add_module(
         f"GRU_output_{kwargs['i']}",
-        GRUOutput(False)
+        GRUOutput(bidirectional=bidirectional)
     )
-    kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
+
+    _optional_layer(True, 'activation', kwargs, layer, nn.ELU())
 
     # Data size doubles
     kwargs['data_size'] *= factor
@@ -311,13 +400,20 @@ def gru(kwargs: dict, layer: dict) -> dict:
 
 def linear_upscale(kwargs: dict, _: dict) -> dict:
     """
-    Constructs a 2x upscaler using a linear layer
+    Constructs a 2x upscaler using a linear layer,
+    combines reshape for use within convolutional layers
 
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), data size (data_size),
-        dimension list (dims), sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
     _ : dictionary
         For compatibility
 
@@ -347,44 +443,33 @@ def conv_upscale(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), data size (data_size),
-        dimension list (dims), sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer], optional
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
     layer : dictionary
-        Must contain number of filters (filters).
-        Can contain batch normalisation (batch_norm) else it isn't used
-        and/or activation layer (activation) else ELU is used
+        filters : integer
+            Number of convolutional filters, must be a multiple of 2;
+        batch_norm : boolean, default = False
+            If batch normalisation should be used;
+        activation : boolean, default = True
+            If ELU activation should be used;
+        kernel : integer, default = 3
+            Size of the kernel;
 
     Returns
     -------
     dictionary
         Returns the input kwargs with any changes made by the function
     """
-    kwargs['dims'].append(layer['filters'])
-
-    conv = nn.Conv1d(
-        in_channels=kwargs['dims'][-2],
-        out_channels=kwargs['dims'][-1],
-        kernel_size=3,
-        padding='same',
-    )
-    kwargs['module'].add_module(f"conv_{kwargs['i']}", conv)
-
-    # Optional batch normalization layer
-    try:
-        if layer['batch_norm']:
-            kwargs['module'].add_module(
-                f"batch_norm_{kwargs['i']}",
-                nn.BatchNorm1d(kwargs['dims'][-1])
-            )
-    except KeyError:
-        pass
-
-    # Optional activation layer
-    try:
-        if layer['activation']:
-            kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
-    except KeyError:
-        kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
+    layer['dropout'] = False
+    layer['stride'] = 1
+    layer['padding'] = 'same'
+    kwargs = convolutional(kwargs, layer)
 
     # Upscaling done using pixel shuffling
     kwargs['module'].add_module(f"pixel_shuffle_{kwargs['i']}", PixelShuffle1d(2))
@@ -403,10 +488,25 @@ def conv_transpose(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), data size (data_size), dropout probability (dropout_prob),
-        dimension list (dims), sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
+        dropout_prob : float, optional
+            Probability of dropout, not required if dropout from layer is False;
     layer : dictionary
-        Must contain number of filters (filters)
+        filters : integer
+            Number of convolutional filters;
+        dropout : boolean, default = True
+            If dropout should be used;
+        batch_norm : boolean, default = False
+            If batch normalisation should be used;
+        activation : boolean, default = True
+            If ELU activation should be used;
 
     Returns
     -------
@@ -423,11 +523,11 @@ def conv_transpose(kwargs: dict, layer: dict) -> dict:
     )
 
     kwargs['module'].add_module(f"conv_transpose_{kwargs['i']}", conv)
-    kwargs['module'].add_module(
-        f"dropout_{kwargs['i']}",
-        nn.Dropout1d(kwargs['dropout_prob'])
-    )
-    kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
+
+    # Optional layers
+    _optional_layer(True, 'dropout', kwargs, layer, nn.Dropout1d(kwargs['dropout_prob']))
+    _optional_layer(False, 'batch_norm', kwargs, layer, nn.BatchNorm1d(kwargs['dims'][-1]))
+    _optional_layer(True, 'activation', kwargs, layer, nn.ELU())
 
     # Data size doubles
     kwargs['data_size'] *= 2
@@ -442,7 +542,14 @@ def upsample(kwargs: dict, _: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), data size (data_size), sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
     _ : dictionary
         For compatibility
 
@@ -451,6 +558,7 @@ def upsample(kwargs: dict, _: dict) -> dict:
     dictionary
         Returns the input kwargs with any changes made by the function
     """
+    kwargs['dims'].append(kwargs['dims'][-1])
     kwargs['module'].add_module(
         f"upsample_{kwargs['i']}",
         nn.Upsample(scale_factor=2, mode='linear')
@@ -461,33 +569,36 @@ def upsample(kwargs: dict, _: dict) -> dict:
     return kwargs
 
 
-def conv_depth_downscale(kwargs: dict, _: dict) -> dict:
+def conv_depth_downscale(kwargs: dict, layer: dict) -> dict:
     """
     Constructs depth downscaler using convolution with kernel size of 1
 
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), dimension list (dims), sequential module (module)
-    _ : dictionary
-        For compatibility
+        i : integer
+            Layer number;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
+    layer : dictionary
+        batch_norm : boolean, default = False
+            If batch normalisation should be used;
+        activation : boolean, default = True
+            If ELU activation should be used;
 
     Returns
     -------
     dictionary
         Returns the input kwargs with any changes made by the function
     """
-    kwargs['dims'].append(1)
+    layer['dropout'] = False
+    layer['filters'] = 1
+    layer['kernel'] = 1
+    layer['padding'] = 'same'
 
-    conv = nn.Conv1d(
-        in_channels=kwargs['dims'][-2],
-        out_channels=kwargs['dims'][-1],
-        kernel_size=1,
-        padding='same'
-    )
-
-    kwargs['module'].add_module(f"conv_downscale_{kwargs['i']}", conv)
-    kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
+    convolutional(kwargs, layer)
 
     return kwargs
 
@@ -499,48 +610,36 @@ def conv_downscale(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), dropout probability (dropout_prob),
-        dimension list (dims), sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
+        dropout_prob : float, optional
+            Probability of dropout, not required if dropout from layer is False;
     layer : dictionary
-        Must contain number of filters (filters).
-        Can contain batch normalisation (batch_norm) else it isn't used
+        filters : integer
+            Number of convolutional filters;
+        dropout : boolean, default = True
+            If dropout should be used;
+        batch_norm : boolean, default = False
+            If batch normalisation should be used;
+        activation : boolean, default = True
+            If ELU activation should be used;
 
     Returns
     -------
     dictionary
         Returns the input kwargs with any changes made by the function
     """
-    kwargs['dims'].append(layer['filters'])
+    layer['kernel'] = 3
+    layer['stride'] = 2
+    layer['padding'] = 1
 
-    conv = nn.Conv1d(
-        in_channels=kwargs['dims'][-2],
-        out_channels=kwargs['dims'][-1],
-        kernel_size=3,
-        stride=2,
-        padding=1,
-        padding_mode='replicate',
-    )
-
-    kwargs['module'].add_module(f"conv_{kwargs['i']}", conv)
-    kwargs['module'].add_module(
-        f"dropout_{kwargs['i']}",
-        nn.Dropout1d(kwargs['dropout_prob'])
-    )
-
-    # Optional batch normalization layer
-    try:
-        if layer['batch_norm']:
-            kwargs['module'].add_module(
-                f"batch_norm_{kwargs['i']}",
-                nn.BatchNorm1d(kwargs['dims'][-1])
-            )
-    except KeyError:
-        pass
-
-    kwargs['module'].add_module(f"ELU_{kwargs['i']}", nn.ELU())
-
-    # Data size halves
-    kwargs['data_size'] = int(kwargs['data_size'] / 2)
+    convolutional(kwargs, layer)
 
     return kwargs
 
@@ -552,8 +651,14 @@ def pool(kwargs: dict, _: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), data size (data_size),
-        dimension list (dims), sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
     _ : dictionary
         For compatibility
 
@@ -579,10 +684,17 @@ def reshape(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain layer number (i), data size (data_size),
-        dimension list (dims), sequential module (module)
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
     layer : dictionary
-        Must contain output dimensions (output)
+        output : integer | tuple[integer, integer]
+            Output dimensions of input tensor, ignoring the first dimension (batch size)
 
     Returns
     -------
@@ -609,6 +721,31 @@ def reshape(kwargs: dict, layer: dict) -> dict:
     return kwargs
 
 
+def extract(kwargs: dict, layer: dict) -> dict:
+    """
+    Extracts a number of values from the tensor, returning two tensors
+
+    Parameters
+    ----------
+    kwargs : dictionary
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+    layer : dictionary
+        number : integer
+            Number of values to extract from the previous layer
+
+    Returns
+    -------
+    dictionary
+        Returns the input kwargs with any changes made by the function
+    """
+    kwargs['dims'].append(kwargs['dims'][-1] - layer['number'])
+    kwargs['data_size'] = kwargs['dims'][-1]
+    return kwargs
+
+
 def concatenate(kwargs: dict, layer: dict) -> dict:
     """
     Constructs a concatenation layer to combine the outputs from two layers
@@ -616,9 +753,11 @@ def concatenate(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain dimension list (dims)
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
     layer : dictionary
-        Must contain layer to concatenate the output with (layer)
+        layer : integer
+            Layer index to concatenate the previous layer output with
 
     Returns
     -------
@@ -636,7 +775,8 @@ def shortcut(kwargs: dict, _: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        Must contain dimension list (dims)
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
     _ : dictionary
         For compatibility
 
