@@ -10,6 +10,8 @@ from numpy import ndarray
 from torch import nn, Tensor
 from torch.utils.data import Dataset, DataLoader, Subset
 
+from fspnet.utils.utils import get_device
+
 
 class SpectrumDataset(Dataset):
     """
@@ -192,6 +194,37 @@ def _min_clamp(data: np.ndarray, axis: int = None) -> np.ndarray:
     return np.maximum(data, min_count)
 
 
+def load_data(data_path: str, columns: list[int] | range = None) -> ndarray:
+    """
+    Loads data from either a csv, pickle or numpy file
+
+    Parameters
+    ----------
+    data_path : string
+        Path to the data
+    columns : list[integer] | range, default = None
+        If data is a csv file, then columns can be used to specify which columns to load
+
+    Returns
+    -------
+    ndarray
+        Data loaded from the file
+    """
+    if '.csv' in data_path:
+        data = np.loadtxt(
+            data_path,
+            delimiter=',',
+            usecols=columns,
+        )
+    elif '.pickle' in data_path:
+        with open(data_path, 'rb') as file:
+            data = np.array(pickle.load(file)['params'])
+    else:
+        data = np.load(data_path)
+
+    return data
+
+
 def load_x_data(y_size: int) -> ndarray:
     """
     Fetches x data from file and matches the length to the y data
@@ -288,7 +321,6 @@ def delete_data(directory: str = None, files: list[str] = None):
 def data_initialisation(
         spectra_path: str,
         log_params: list,
-        kwargs: dict,
         val_frac: float = 0.1,
         transform: tuple[tuple[float, float], tuple[ndarray, ndarray]] = None,
         indices: ndarray = None) -> tuple[DataLoader, DataLoader]:
@@ -301,8 +333,6 @@ def data_initialisation(
         Path to synthetic data
     log_params : list
         Index of each free parameter in logarithmic space
-    kwargs : dictionary
-        Keyword arguments for dataloader
     val_frac : float, default = 0.1
         Fraction of validation data
     transform : tuple[tuple[float, float], tuple[ndarray, ndarray]], default = None
@@ -316,6 +346,7 @@ def data_initialisation(
         Dataloaders for the training and validation datasets
     """
     batch_size = 120
+    kwargs = get_device()[0]
 
     # Fetch dataset & create train & val data
     dataset = SpectrumDataset(

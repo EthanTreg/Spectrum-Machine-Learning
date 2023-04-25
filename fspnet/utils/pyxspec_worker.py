@@ -148,7 +148,7 @@ class PyXspecFitting:
         for i, (spectrum_params, name) in enumerate(zip(params, names)):
             # Load spectrum
             xspec.Spectrum(name)
-            xspec.AllData.ignore('0-0.3 10.0-**')
+            xspec.AllData.ignore('0.0-0.3 10.0-**')
 
             # Calculate fit statistic
             losses.append(self._fit_statistic(spectrum_params))

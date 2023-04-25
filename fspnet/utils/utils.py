@@ -5,6 +5,7 @@ import os
 from argparse import ArgumentParser
 
 import yaml
+import torch
 import numpy as np
 
 
@@ -64,6 +65,21 @@ def file_names(data_dir: str, blacklist: list[str] = None, whitelist: str = None
         files = np.delete(files, np.char.find(files, substring) != -1)
 
     return files
+
+
+def get_device() -> tuple[dict, torch.device]:
+    """
+    Gets the device for PyTorch to use
+
+    Returns
+    -------
+    tuple[dictionary, device]
+        Arguments for the PyTorch DataLoader to use when loading data into memory and PyTorch device
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
+
+    return kwargs, device
 
 
 def open_config(key: str, config_path: str, parser: ArgumentParser = None) -> tuple[str, dict]:

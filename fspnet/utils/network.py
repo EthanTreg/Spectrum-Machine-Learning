@@ -8,6 +8,7 @@ import torch
 from torch import nn, optim, Tensor
 
 from fspnet.utils import layers
+from fspnet.utils.utils import get_device
 
 
 class Network(nn.Module):
@@ -16,12 +17,12 @@ class Network(nn.Module):
 
     Attributes
     ----------
-    encoder : boolean
-        If network is an encoder
     name : string
         Name of the network, used for saving
     layers : list[dictionary]
         Layers with layer parameters
+    clone : Tensor
+        Cloned values from the network
     extraction : Tensor
         Values extracted from the network using an extraction layer
     network : ModuleList
@@ -34,7 +35,7 @@ class Network(nn.Module):
     Methods
     -------
     forward(x)
-        Forward pass of CNN
+        Forward pass of the network
     """
     def __init__(
             self,
@@ -58,16 +59,20 @@ class Network(nn.Module):
             Path to the network config directory
         """
         super().__init__()
+        self.latent_mse_weight = 5e-3
+        self.kl_loss_weight = 1e-1
         self.name = name
+        self.clone = None
         self.extraction = None
+        self.kl_loss = torch.tensor(0.)
 
         # If network is an encoder
-        if 'Encoder' in name:
-            self.encoder = True
+        if 'autoencoder' in name.lower():
+            input_size = output_size = spectra_size
+        elif 'encoder' in name.lower():
             input_size = spectra_size
             output_size = params_size
         else:
-            self.encoder = False
             input_size = params_size
             output_size = spectra_size
 
@@ -87,7 +92,7 @@ class Network(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """
-        Forward pass of the CNN
+        Forward pass of the network
 
         Parameters
         ----------
@@ -97,13 +102,17 @@ class Network(nn.Module):
         Returns
         -------
         Tensor
-            Output tensor from the CNN
+            Output tensor from the network
         """
         outputs = []
 
         for i, layer in enumerate(self.layers):
+            # Sampling layer
+            if layer['type'] == 'sample':
+                x, self.kl_loss = self.network[i](x)
+                self.kl_loss *= self.kl_loss_weight
             # Concatenation layers
-            if layer['type'] == 'concatenate':
+            elif layer['type'] == 'concatenate':
                 x = torch.cat((x, outputs[layer['layer']]), dim=1)
             # Shortcut layers
             elif layer['type'] == 'shortcut':
@@ -112,6 +121,9 @@ class Network(nn.Module):
             elif layer['type'] == 'extract':
                 x = x[..., layer['number']:]
                 self.extraction = x[..., :layer['number']]
+            # Cloning layer
+            elif layer['type'] == 'clone':
+                self.clone = x[..., :layer['number']].clone()
             # All other layers
             else:
                 x = self.network[i](x)
@@ -124,7 +136,6 @@ class Network(nn.Module):
 def load_network(
         load_num: int,
         states_dir: str,
-        device: torch.device,
         network: Network) -> tuple[int, Network, tuple[list, list]] | None:
     """
     Loads the network from a previously saved state
@@ -137,8 +148,6 @@ def load_network(
         File number of the saved state
     states_dir : string
         Directory to the save files
-    device : device
-        Which device type PyTorch should use
     network : Network
         The network to append saved state to
 
@@ -148,15 +157,15 @@ def load_network(
         The initial epoch, the updated network, optimizer
         and scheduler, and the training and validation losses
     """
-    d_state = torch.load(f'{states_dir}{network.name}_{load_num}.pth', map_location=device)
+    state = torch.load(f'{states_dir}{network.name}_{load_num}.pth', map_location=get_device()[1])
 
     # Apply the saved states to the new network
-    initial_epoch = d_state['epoch']
-    network.load_state_dict(network.state_dict() | d_state['state_dict'])
-    network.optimizer.load_state_dict(d_state['optimizer'])
-    network.scheduler.load_state_dict(d_state['scheduler'])
-    train_loss = d_state['train_loss']
-    val_loss = d_state['val_loss']
+    initial_epoch = state['epoch']
+    network.load_state_dict(network.state_dict() | state['state_dict'])
+    network.optimizer.load_state_dict(state['optimizer'])
+    network.scheduler.load_state_dict(state['scheduler'])
+    train_loss = state['train_loss']
+    val_loss = state['val_loss']
 
     return initial_epoch, network, (train_loss, val_loss)
 

@@ -10,12 +10,11 @@ from numpy import ndarray
 from torch.utils.data import DataLoader
 
 from fspnet.utils.network import Network
-from fspnet.utils.utils import open_config
+from fspnet.utils.utils import open_config, get_device
 
 
 def autoencoder_saliency(
         loader: DataLoader,
-        device: torch.device,
         encoder: Network,
         decoder: Network) -> tuple[ndarray, ndarray, ndarray]:
     """
@@ -26,8 +25,6 @@ def autoencoder_saliency(
     ----------
     loader : DataLoader
         Autoencoder validation data loader
-    device : device
-        Which device type PyTorch should use
     encoder : Network
         Encoder half of the network
     decoder : Network
@@ -39,7 +36,7 @@ def autoencoder_saliency(
         Original spectra, output, and saliency
     """
     # Constants
-    spectra = next(iter(loader))[0][:8].to(device)
+    spectra = next(iter(loader))[0][:8].to(get_device()[1])
 
     # Initialization
     torch.backends.cudnn.enabled = False
@@ -57,7 +54,7 @@ def autoencoder_saliency(
     return spectra.detach().cpu().numpy(), output.detach().cpu().numpy(), saliency.numpy()
 
 
-def decoder_saliency(loader: DataLoader, device: torch.device, decoder: Network):
+def decoder_saliency(loader: DataLoader, decoder: Network):
     """
     Calculates the importance of each parameter on the output spectrum
     by calculating the saliency using backpropagation of the decoder
@@ -66,13 +63,12 @@ def decoder_saliency(loader: DataLoader, device: torch.device, decoder: Network)
     ----------
     loader : DataLoader
         Decoder validation data loader
-    device : device
-        Which device type PyTorch should use
     decoder : Network
         Decoder half of the network
     """
     # Constants
     saliency = []
+    device = get_device()[1]
 
     # Initialization
     torch.backends.cudnn.enabled = False

@@ -539,8 +539,15 @@ Going from 3D to 2D, `reshape` will use `output = [-1]`
 * `reshape`: Reshapes the dimensions
     * `output`: integer or tuple[integer, integer], dimensions of the output of the layer,
       ignoring the first dimension of $N$
+* `sample`: Predicts the mean and standard deviation of a Gaussian distribution
+  and randomly samples from it for a variational autoencoder
+    * `factor`: optional float, _output size_ = `factor` $\times$ _network output size_,
+      will be used if provided, else `features` will be used
+    * `features`: optional integer, output size, won't be used if `factor` is provided
 * `extract`: Extracts values from the previous layer to pass to the output
     * `number`: integer, number of values to extract from the previous layer
+* `clone`: Clones a number of features from the previous layer
+    * `number`: integer, number of values to clone from the previous layer
 * `concatenate`: Concatenates the previous layer with a specified layer
     * `layer`: integer, layer index to concatenate the previous layer with
 * `shortcut`: Adds the previous layer with the specified layer

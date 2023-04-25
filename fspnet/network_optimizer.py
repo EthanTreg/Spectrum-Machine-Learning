@@ -5,7 +5,6 @@ import os
 import json
 import logging as log
 
-import torch
 import joblib
 import optuna
 from torch.utils.data import DataLoader
@@ -13,7 +12,7 @@ from torch.utils.data import DataLoader
 from fspnet.utils.network import Network
 from fspnet.utils.training import train_val
 from fspnet.utils.data import data_initialisation
-from fspnet.utils.utils import progress_bar, open_config
+from fspnet.utils.utils import progress_bar, open_config, get_device
 
 
 def _build_network(config_path: str, filters: list[int], conv_layers: list[int]):
@@ -68,8 +67,7 @@ def _build_network(config_path: str, filters: list[int], conv_layers: list[int])
 def _objective(
         trial: optuna.trial.Trial,
         loaders: tuple,
-        config: dict,
-        device: torch.device) -> float:
+        config: dict) -> float:
     """
     Objective function that trials parameters to optimize hyperparameters
 
@@ -81,8 +79,6 @@ def _objective(
         Train dataloader and validation dataloader
     config : dictionary
         Configuration dictionary
-    device : device
-        Which device type PyTorch should use
 
     Returns
     -------
@@ -115,15 +111,15 @@ def _objective(
         learning_rate,
         f'{network_name}_temp',
         config_dir,
-    ).to(device)
+    ).to(get_device()[1])
 
     # Train for each epoch
     for epoch in range(epochs):
         epoch += 1
 
         # Train CNN
-        train_val(device, loaders[0], decoder)
-        loss = train_val(device, loaders[1], decoder, train=False)[0]
+        train_val(loaders[0], decoder)
+        loss = train_val(loaders[1], decoder, train=False)[0]
         decoder.scheduler.step(loss)
         trial.report(loss, epoch)
 
@@ -134,7 +130,7 @@ def _objective(
         progress_bar(epoch, epochs + 1, f'Loss: {loss:.3e}\tEpoch: {epoch}')
 
     # Final validation
-    loss = train_val(device, loaders[1], decoder, train=False)[0]
+    loss = train_val(loaders[1], decoder, train=False)[0]
     print(f'Validation loss: {loss:.3e}\n')
 
     return loss
@@ -142,8 +138,7 @@ def _objective(
 
 def optimize_network(
         config: dict,
-        loaders: tuple[DataLoader, DataLoader],
-        device: torch.device) -> dict:
+        loaders: tuple[DataLoader, DataLoader]) -> dict:
     """
     Optimizes the hyperparameters of the network using Optuna and plots the results
 
@@ -153,8 +148,6 @@ def optimize_network(
         Configuration dictionary
     loaders : tuple[DataLoader, DataLoader]
         Train and validation dataloaders
-    device : device
-        Which device type PyTorch should use
 
     Returns
     -------
@@ -194,7 +187,7 @@ def optimize_network(
 
     # Train network for each trial
     for i in range(initial, num_trials):
-        study.optimize(lambda x: _objective(x, loaders, config, device), n_trials=1)
+        study.optimize(lambda x: _objective(x, loaders, config), n_trials=1)
 
         if save:
             state = {'trial': i, 'study': study, 'pruner': pruner}
@@ -226,18 +219,10 @@ def main(config_path: str = '../config.yaml'):
     spectra_path = config['data']['spectra-path']
     log_params = config['optimization']['log-parameters']
 
-    # Set device to GPU if available
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
-
     # Initialize datasets
-    loaders = data_initialisation(
-        spectra_path,
-        log_params,
-        kwargs,
-    )
+    loaders = data_initialisation(spectra_path, log_params)
 
-    optimize_network(config, loaders, device)
+    optimize_network(config, loaders)
 
 
 if __name__ == '__main__':

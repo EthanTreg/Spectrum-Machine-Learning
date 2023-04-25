@@ -4,6 +4,8 @@ Implements several layer types to be loaded into a network
 import torch
 from torch import nn, Tensor
 
+from fspnet.utils.utils import get_device
+
 
 class Reshape(nn.Module):
     """
@@ -18,7 +20,6 @@ class Reshape(nn.Module):
     forward(x)
         Forward pass of Reshape
     """
-
     def __init__(self, shape: list[int]):
         """
         Parameters
@@ -124,7 +125,6 @@ class PixelShuffle1d(nn.Module):
     forward(x)
         Forward pass of PixelShuffle1D
     """
-
     def __init__(self, upscale_factor: int):
         """
         Parameters
@@ -156,6 +156,53 @@ class PixelShuffle1d(nn.Module):
         x = x.permute(0, 2, 3, 1)
         x = x.reshape(x.size(0), output_channels, output_size)
         return x
+
+
+class Sample(nn.Module):
+    """
+    Samples random values from a Gaussian distribution for a variational autoencoder
+
+    Attributes
+    ----------
+    sample_layer : Module
+        Layer to sample values from a Gaussian distribution
+
+    Methods
+    -------
+    forward(x)
+        Forward pass of the sampling layer
+    """
+    def __init__(self, in_features: int, out_features: int):
+        super().__init__()
+        device = get_device()[1]
+
+        self.mean_layer = nn.Linear(in_features=in_features, out_features=out_features)
+        self.std_layer = nn.Linear(in_features=in_features, out_features=out_features)
+        self.sample_layer = torch.distributions.Normal(
+            torch.tensor(0.).to(device),
+            torch.tensor(1.).to(device),
+        ).sample
+
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        """
+        Forward pass of the sampling layer for a variational autoencoder
+
+        Parameters
+        ----------
+        x : Tensor
+            Input tensor
+
+        Returns
+        -------
+        tuple[Tensor, Tensor]
+            Output tensor and KL Divergence loss
+        """
+        mean = self.mean_layer(x)
+        std = torch.exp(self.std_layer(x))
+        x = mean + std * self.sample_layer(mean.shape)
+        kl_loss = 0.5 * torch.mean(mean ** 2 + std ** 2 - 2 * torch.log(std) - 1)
+
+        return x, kl_loss
 
 
 def _optional_layer(
@@ -721,6 +768,51 @@ def reshape(kwargs: dict, layer: dict) -> dict:
     return kwargs
 
 
+def sample(kwargs: dict, layer: dict) -> dict:
+    """
+    Generates mean and standard deviation and randomly samples from a Gaussian distribution
+    for a variational autoencoder
+
+    Parameters
+    ----------
+    kwargs : dictionary
+        i : integer
+            Layer number;
+        data_size : integer
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
+        output_size : integer, optional
+            Size of the network's output, required only if layer contains factor and not features;
+    layer : dictionary
+        factor : float, optional
+            Output features is equal to the factor of the network's output,
+            will be used if provided, else features will be used;
+        features : integer, optional
+            Number of output features for the layer,
+            if output_size from kwargs and factor is provided, features will not be used;
+
+    Returns
+    -------
+    dictionary
+        Returns the input kwargs with any changes made by the function
+    """
+    # Number of features can be defined by either a factor of the output size or explicitly
+    try:
+        kwargs['dims'].append(int(kwargs['output_size'] * layer['factor']))
+    except KeyError:
+        kwargs['dims'].append(layer['features'])
+
+    kwargs['data_size'] = kwargs['dims'][-1]
+    kwargs['module'].add_module(
+        f"sample_{kwargs['i']}",
+        Sample(kwargs['dims'][-2], kwargs['dims'][-1]),
+    )
+    return kwargs
+
+
 def extract(kwargs: dict, layer: dict) -> dict:
     """
     Extracts a number of values from the tensor, returning two tensors
@@ -743,6 +835,27 @@ def extract(kwargs: dict, layer: dict) -> dict:
     """
     kwargs['dims'].append(kwargs['dims'][-1] - layer['number'])
     kwargs['data_size'] = kwargs['dims'][-1]
+    return kwargs
+
+
+def clone(kwargs: dict, _: dict) -> dict:
+    """
+    Constructs a layer to clone a number of values from the previous layer
+
+    Parameters
+    ----------
+    kwargs : dictionary
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+    _ : dictionary
+        For compatibility
+
+    Returns
+    -------
+    dictionary
+        Returns the input kwargs with any changes made by the function
+    """
+    kwargs['dims'].append(kwargs['dims'][-1])
     return kwargs
 
 

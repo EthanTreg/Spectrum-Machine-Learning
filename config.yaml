@@ -8,7 +8,7 @@ global-variables:
 #    - &decoder_name 'test_decoder_fnn'
 #    - &decoder_name 'test_decoder_cnn'
     # File name for encoder model to load
-    - &encoder_name 'Encoder V3'
+    - &encoder_name 'Encoder V4'
     # Path to the configuration files for the encoder and decoder
     - &network_configs_directory '../network_configs/'
   data-variables:
@@ -53,16 +53,16 @@ spectrum-fit:
     # File number to save decoder progress
     decoder-save: 0
     # File number to save encoder progress
-    encoder-save: 0
+    encoder-save: 35
     # File number to load decoder state
-    decoder-load: 15
+    decoder-load: 16
     # File number to load encoder state
-    encoder-load: 15
+    encoder-load: 0
     # Number of epochs to train for
     epochs: 100
     # Number of threads to use for multiprocessing, 0 will use all available,
     # only used if tests is True
-    cpus: 6
+    cpus: 8
     # Learning rate for training
     learning-rate: 0.0001
     # File name for decoder model to load
@@ -79,7 +79,7 @@ spectrum-fit:
     # if parameters are provided and PyXspec validation is used
     decoder-data-path: *synthetic_data_path
     # Path to the spectra for encoder training, same format as for decoder
-    encoder-data-path: *spectra_data_path
+    encoder-data-path: *synthetic_data_path
     # Path to the directory of spectra fits files, only required if parameters exists,
     # and you want to use PyXspec validation
     spectra-directory: *spectra_data_directory

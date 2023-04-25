@@ -184,7 +184,7 @@ def _generate_synth(
 
     # Generate fake spectrum
     model.setPars(params)
-    xspec.AllData.fakeit(nSpectra=1, settings=fake_base, noWrite=True)
+    xspec.AllData.fakeit(nSpectra=1, settings=fake_base, applyStats=False, noWrite=True)
 
     return np.fromiter(params.values(), dtype=float)[fixed_num:]
 
@@ -232,19 +232,6 @@ def _update_base_spectrum(
 def worker():
     """
     Worker for multiprocessing to generate synthetic spectra
-
-    Parameters
-    ----------
-    synth_num_total : integer
-        Number of synthetic spectra to generate for the worker
-    config : dictionary
-        Configuration settings
-    spectra_names : ndarray
-        Names of possible spectra to base the background, response and auxiliary response off
-    bad_num_queue : Queue
-        Number of bad per good synthetic spectra
-    model : Model
-        PyXspec Model to base the synthetic spectra off
     """
     rank, cpus, worker_dir, data = initialize_worker()
 

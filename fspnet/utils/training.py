@@ -9,6 +9,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from fspnet.utils.network import Network
+from fspnet.utils.utils import get_device
 from fspnet.utils.multiprocessing import check_cpus, mpi_multiprocessing
 
 
@@ -77,7 +78,6 @@ def pyxspec_test(
         cpus: int = 1,
         job_name: str = None,
         defaults: torch.Tensor = None,
-        device: torch.device = None,
         encoder: Network = None):
     """
     If encoder is provided, creates predictions for each spectrum, otherwise, uses true parameters
@@ -95,8 +95,6 @@ def pyxspec_test(
         If not None, file name to save the output to
     defaults : Tensor, default = None
         If default parameters should be used
-    device : device, default = None
-        Which device type PyTorch should use, not needed if encoder is None
     encoder : Network, default = None
         Encoder to predict parameters, if None, true parameters will be used
     """
@@ -120,7 +118,7 @@ def pyxspec_test(
             if defaults is not None:
                 param_batch = defaults.repeat(data[0].size(0), 1)
             elif encoder:
-                param_batch = encoder(data[0].to(device)).cpu()
+                param_batch = encoder(data[0].to(get_device()[1])).cpu()
             else:
                 param_batch = data[1]
 
@@ -139,9 +137,8 @@ def pyxspec_test(
 
 
 def train_val(
-        device: torch.device,
         loader: DataLoader,
-        cnn: Network,
+        network: Network,
         train: bool = True,
         surrogate: Network = None) -> tuple[float, np.ndarray, np.ndarray]:
     """
@@ -149,11 +146,9 @@ def train_val(
 
     Parameters
     ----------
-    device : device
-        Which device type PyTorch should use
     loader : DataLoader
         PyTorch DataLoader that contains data to train
-    cnn : Network
+    network : Network
         CNN to use for training/validation
     train : bool, default = True
         If network should be trained or validated
@@ -166,44 +161,47 @@ def train_val(
         Average loss value, spectra & reconstructions
     """
     epoch_loss = 0
+    device = get_device()[1]
 
     if train:
-        cnn.train()
+        network.train()
 
         if surrogate:
             surrogate.train()
     else:
-        cnn.eval()
+        network.eval()
 
         if surrogate:
             surrogate.eval()
 
     with torch.set_grad_enabled(train):
         for spectra, params, *_ in loader:
+            loss = torch.tensor(0.).to(device)
             spectra = spectra.to(device)
+            params = params.to(device)
 
             # If surrogate is not none, train encoder with surrogate
             if surrogate:
-                output = surrogate(cnn(spectra))
+                output = network(spectra)
+                loss += network.latent_mse_weight * nn.MSELoss()(output, params)
+                output = surrogate(output)
                 target = spectra
             else:
-                params = params.to(device)
-
                 # Train encoder with supervision or decoder
-                if cnn.encoder:
-                    output = cnn(spectra)
+                if 'encoder' in network.name.lower():
+                    output = network(spectra)
                     target = params
                 else:
-                    output = cnn(params)
+                    output = network(params)
                     target = spectra
 
-            loss = nn.MSELoss()(output, target)
+            loss += nn.MSELoss()(output, target) + network.kl_loss.to(device)
 
             if train:
                 # Optimise CNN
-                cnn.optimizer.zero_grad()
+                network.optimizer.zero_grad()
                 loss.backward()
-                cnn.optimizer.step()
+                network.optimizer.step()
 
             epoch_loss += loss.item()
 
@@ -213,8 +211,7 @@ def train_val(
 def training(
         epochs: tuple[int, int],
         loaders: tuple[DataLoader, DataLoader],
-        cnn: Network,
-        device: torch.device,
+        network: Network,
         save_num: int = 0,
         states_dir: str = None,
         losses: tuple[list, list] = None,
@@ -228,10 +225,8 @@ def training(
         Initial epoch & number of epochs to train
     loaders : tuple[DataLoader, DataLoader]
         Train and validation dataloaders
-    cnn : Network
+    network : Network
         CNN to use for training
-    device : device
-        Which device type PyTorch should use
     save_num : integer, default = 0
         The file number to save the new state, if 0, nothing will be saved
     states_dir : string, default = None
@@ -255,11 +250,11 @@ def training(
         epoch += 1
 
         # Train CNN
-        losses[0].append(train_val(device, loaders[0], cnn, surrogate=surrogate)[0])
+        losses[0].append(train_val(loaders[0], network, surrogate=surrogate)[0])
 
         # Validate CNN
-        losses[1].append(train_val(device, loaders[1], cnn, train=False, surrogate=surrogate)[0])
-        cnn.scheduler.step(losses[1][-1])
+        losses[1].append(train_val(loaders[1], network, train=False, surrogate=surrogate)[0])
+        network.scheduler.step(losses[1][-1])
 
         # Save training progress
         if save_num:
@@ -269,12 +264,12 @@ def training(
                 'train_loss': losses[0],
                 'val_loss': losses[1],
                 'indices': loaders[0].dataset.dataset.indices,
-                'state_dict': cnn.state_dict(),
-                'optimizer': cnn.optimizer.state_dict(),
-                'scheduler': cnn.scheduler.state_dict(),
+                'state_dict': network.state_dict(),
+                'optimizer': network.optimizer.state_dict(),
+                'scheduler': network.scheduler.state_dict(),
             }
 
-            torch.save(state, f'{states_dir}{cnn.name}_{save_num}.pth')
+            torch.save(state, f'{states_dir}{network.name}_{save_num}.pth')
 
         print(f'Epoch [{epoch}/{epochs[1]}]\t'
               f'Training loss: {losses[0][-1]:.3e}\t'
@@ -282,7 +277,7 @@ def training(
               f'Time: {time() - t_initial:.1f}')
 
     # Final validation
-    loss, spectra, outputs = train_val(device, loaders[1], cnn, train=False, surrogate=surrogate)
+    loss, spectra, outputs = train_val(loaders[1], network, train=False, surrogate=surrogate)
     losses[1].append(loss)
     print(f'\nFinal validation loss: {losses[1][-1]:.3e}')
 

@@ -10,10 +10,10 @@ import matplotlib
 import numpy as np
 from torch.utils.data import DataLoader
 
-from fspnet.utils.utils import open_config
 from fspnet.utils.data import data_initialisation
-from fspnet.utils.network import load_network, Network
+from fspnet.utils.utils import open_config, get_device
 from fspnet.utils.training import training, pyxspec_test
+from fspnet.utils.network import load_network, Network
 from fspnet.utils.analysis import (
     autoencoder_saliency,
     decoder_saliency,
@@ -22,6 +22,7 @@ from fspnet.utils.analysis import (
 )
 from fspnet.utils.plots import (
     plot_saliency,
+    plot_param_pairs,
     plot_param_distribution,
     plot_param_comparison,
     plot_linear_weights,
@@ -55,7 +56,7 @@ def predict_parameters(
         config['training']['encoder-name'],
         config,
     )[2:]
-    (_, loader), _, device = returns
+    _, loader = returns[0]
 
     if not encoder:
         encoder = returns[1]
@@ -72,7 +73,7 @@ def predict_parameters(
     with torch.no_grad():
         for spectra, *_, names_batch in loader:
             names.extend(names_batch)
-            param_batch = encoder(spectra.to(device)).cpu()
+            param_batch = encoder(spectra.to(get_device()[1])).cpu()
 
             # Transform parameters
             param_batch = param_batch * param_transform[1] + param_transform[0]
@@ -96,7 +97,6 @@ def initialization(
     tuple[list, list],
     tuple[DataLoader, DataLoader],
     Network,
-    torch.device,
 ]:
     """
     Trains & validates network, used for progressive learning
@@ -112,8 +112,8 @@ def initialization(
 
     Returns
     -------
-    tuple[integer, tuple[list, list], tuple[DataLoader, DataLoader], Network, device]
-        Initial epoch; train & validation losses; train & validation dataloaders; network; & device
+    tuple[integer, tuple[list, list], tuple[DataLoader, DataLoader], Network]
+        Initial epoch; train & validation losses; train & validation dataloaders; & network
     """
     if isinstance(config, str):
         _, config = open_config('spectrum-fit', config)
@@ -121,6 +121,7 @@ def initialization(
     # Constants
     initial_epoch = 0
     losses = ([], [])
+    device = get_device()[1]
 
     if 'encoder' in name.lower():
         network_type = 'encoder'
@@ -139,10 +140,6 @@ def initialization(
     states_dir = config['output']['network-states-directory']
     log_params = config['model']['log-parameters']
 
-    # Set device to GPU if available
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
-
     if load_num:
         try:
             state = torch.load(f'{states_dir}{name}_{load_num}.pth', map_location=device)
@@ -160,7 +157,6 @@ def initialization(
     loaders = data_initialisation(
         spectra_path,
         log_params,
-        kwargs,
         transform=transform,
         indices=indices,
     )
@@ -176,14 +172,9 @@ def initialization(
 
     # Load states from previous training
     if load_num:
-        initial_epoch, network, losses = load_network(
-            load_num,
-            states_dir,
-            device,
-            network,
-        )
+        initial_epoch, network, losses = load_network(load_num, states_dir, network)
 
-    return initial_epoch, losses, loaders, network, device
+    return initial_epoch, losses, loaders, network
 
 
 def main(config_path: str = '../config.yaml'):
@@ -257,13 +248,13 @@ def main(config_path: str = '../config.yaml'):
         pickle.dump(worker_data, file)
 
     # Initialize data & decoder
-    d_initial_epoch, d_losses, d_loaders, decoder, _ = initialization(
+    d_initial_epoch, d_losses, d_loaders, decoder = initialization(
         config['training']['decoder-name'],
         config=config,
     )
 
     # Initialize data & encoder
-    e_initial_epoch, e_losses, e_loaders, encoder, device = initialization(
+    e_initial_epoch, e_losses, e_loaders, encoder = initialization(
         config['training']['encoder-name'],
         config=config,
         transform=d_loaders[0].dataset.dataset.transform,
@@ -274,7 +265,6 @@ def main(config_path: str = '../config.yaml'):
         (d_initial_epoch, num_epochs),
         d_loaders,
         decoder,
-        device,
         save_num=config['training']['decoder-save'],
         states_dir=states_dir,
         losses=d_losses,
@@ -287,7 +277,6 @@ def main(config_path: str = '../config.yaml'):
         (e_initial_epoch, num_epochs),
         e_loaders,
         encoder,
-        device,
         save_num=config['training']['encoder-save'],
         states_dir=states_dir,
         losses=e_losses,
@@ -318,9 +307,11 @@ def main(config_path: str = '../config.yaml'):
         config,
     )
 
+    plot_param_pairs([e_data_path, predictions_path], ['Targets', 'Predictions'], config)
+
     # Calculate saliencies
-    decoder_saliency(d_loaders[1], device, decoder)
-    saliency_output = autoencoder_saliency(e_loaders[1], device, encoder, decoder)
+    decoder_saliency(d_loaders[1], decoder)
+    saliency_output = autoencoder_saliency(e_loaders[1], encoder, decoder)
     plot_saliency(plots_dir, *saliency_output)
 
     if not tests:
@@ -333,7 +324,6 @@ def main(config_path: str = '../config.yaml'):
         e_loaders[1],
         cpus=cpus,
         job_name='Encoder_output',
-        device=device,
         encoder=encoder,
     )
 
@@ -352,7 +342,8 @@ def main(config_path: str = '../config.yaml'):
 
     # Allow Xspec optimization
     worker_data['optimize'] = True
-    np.save(f'{worker_dir}worker_data.npy', worker_data)
+    with open(f'{worker_dir}worker_data.pickle', 'wb') as file:
+        pickle.dump(worker_data, file)
 
     # Encoder + Xspec performance
     print('\nTesting Encoder + Fitting...')
@@ -361,7 +352,6 @@ def main(config_path: str = '../config.yaml'):
         e_loaders[1],
         cpus=cpus,
         job_name='Encoder_Xspec_output',
-        device=device,
         encoder=encoder,
     )
 
