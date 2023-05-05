@@ -4,11 +4,11 @@
 global-variables:
   network-variables:
     # File name for decoder model to load
-    - &decoder_name 'Decoder V2'
-#    - &decoder_name 'test_decoder_fnn'
-#    - &decoder_name 'test_decoder_cnn'
+    - &decoder_name 'Decoder V8'
+#    - &decoder_name 'test_decoder_cnn_v3'
     # File name for encoder model to load
-    - &encoder_name 'Encoder V4'
+    - &encoder_name 'Encoder V7'
+#    - &encoder_name 'test_encoder_cnn_v1'
     # Path to the configuration files for the encoder and decoder
     - &network_configs_directory '../network_configs/'
   data-variables:
@@ -49,13 +49,13 @@ spectrum-fit:
   # Variables for training the network
   training:
     # Whether PyXspec tests should be used or not
-    tests: True
+    tests: False
     # File number to save decoder progress
     decoder-save: 0
     # File number to save encoder progress
-    encoder-save: 35
+    encoder-save: 234
     # File number to load decoder state
-    decoder-load: 16
+    decoder-load: 4
     # File number to load encoder state
     encoder-load: 0
     # Number of epochs to train for

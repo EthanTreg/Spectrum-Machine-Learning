@@ -39,7 +39,7 @@ class Network(nn.Module):
     """
     def __init__(
             self,
-            spectra_size: int,
+            spectra_size: int | tuple[int, int],
             params_size: int,
             learning_rate: float,
             name: str,
@@ -59,14 +59,14 @@ class Network(nn.Module):
             Path to the network config directory
         """
         super().__init__()
-        self.latent_mse_weight = 5e-3
+        self.latent_mse_weight = 1e-2
         self.kl_loss_weight = 1e-1
         self.name = name
         self.clone = None
         self.extraction = None
         self.kl_loss = torch.tensor(0.)
 
-        # If network is an encoder
+        # If network is an autoencoder, encoder or decoder
         if 'autoencoder' in name.lower():
             input_size = output_size = spectra_size
         elif 'encoder' in name.lower():
@@ -104,19 +104,13 @@ class Network(nn.Module):
         Tensor
             Output tensor from the network
         """
-        outputs = []
+        outputs = [x]
 
         for i, layer in enumerate(self.layers):
             # Sampling layer
             if layer['type'] == 'sample':
                 x, self.kl_loss = self.network[i](x)
                 self.kl_loss *= self.kl_loss_weight
-            # Concatenation layers
-            elif layer['type'] == 'concatenate':
-                x = torch.cat((x, outputs[layer['layer']]), dim=1)
-            # Shortcut layers
-            elif layer['type'] == 'shortcut':
-                x = x + outputs[layer['layer']]
             # Extraction layer
             elif layer['type'] == 'extract':
                 x = x[..., layer['number']:]
@@ -124,6 +118,15 @@ class Network(nn.Module):
             # Cloning layer
             elif layer['type'] == 'clone':
                 self.clone = x[..., :layer['number']].clone()
+            # Concatenation layers
+            elif layer['type'] == 'concatenate':
+                x = torch.cat((x, outputs[layer['layer']]), dim=1)
+            # Shortcut layers
+            elif layer['type'] == 'shortcut':
+                x = x + outputs[layer['layer']]
+            # Skip layers
+            elif layer['type'] == 'skip':
+                x = outputs[layer['layer']]
             # All other layers
             else:
                 x = self.network[i](x)
@@ -171,8 +174,8 @@ def load_network(
 
 
 def create_network(
-        input_size: int,
-        output_size: int,
+        input_size: int | tuple[int, int],
+        output_size: int | tuple[int, int],
         config_path: str) -> tuple[list[dict], nn.ModuleList]:
     """
     Creates a network from a config file
@@ -195,12 +198,20 @@ def create_network(
     with open(config_path, 'r', encoding='utf-8') as file:
         file = json.load(file)
 
+    if isinstance(input_size, tuple) and len(input_size) == 2:
+        dims, input_size = input_size
+    else:
+        dims = input_size
+
+    if isinstance(output_size, tuple):
+        output_size = output_size[-1]
+
     # Initialize variables
     kwargs = {
-        'data_size': input_size,
+        'data_size': [input_size],
         'output_size': output_size,
-        'dims': [input_size],
-        'dropout_prob': file['net']['dropout_prob'],
+        'dims': [dims],
+        **file['net'],
     }
     module_list = nn.ModuleList()
 
@@ -217,12 +228,11 @@ def create_network(
 
         module_list.append(kwargs['module'])
 
-    if kwargs['data_size'] != output_size:
+    if kwargs['data_size'][-1] != output_size:
         log.error(
             f"Network output size ({kwargs['data_size']}) != data output size ({output_size})",
         )
-
-    if kwargs['dims'][-1] != output_size:
+    elif kwargs['dims'][-1] != output_size:
         log.error(f"Network output filters (num={kwargs['dims'][-1]}) has not been reduced, "
                   'reshape with output = [-1] may be missing')
 

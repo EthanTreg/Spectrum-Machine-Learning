@@ -2,15 +2,15 @@
 Calculates the saliency of decoders or autoencoders using backpropagation
 """
 import re
-import pickle
 
 import torch
 import numpy as np
 from numpy import ndarray
 from torch.utils.data import DataLoader
 
+from fspnet.utils.data import load_data
 from fspnet.utils.network import Network
-from fspnet.utils.utils import open_config, get_device
+from fspnet.utils.utils import get_device
 
 
 def autoencoder_saliency(
@@ -100,54 +100,58 @@ def decoder_saliency(loader: DataLoader, decoder: Network):
     )
 
 
-def param_comparison(config: dict | str = '../config.yaml') -> tuple[ndarray, ndarray]:
+def param_comparison(data_paths: tuple[str, str]) -> tuple[ndarray, ndarray]:
     """
     Gets and transforms data to compare parameter values
 
     Parameters
     ----------
-    config : dictionary | string, default = '../config.yaml'
-        Configuration dictionary or file path to the configuration file
+    data_paths : tuple[string, string]
+        Paths to the parameters to compare
 
     Returns
     -------
     tuple[ndarray, ndarray]
         Target parameters and parameter predictions
     """
-    if isinstance(config, str):
-        _, config = open_config('spectrum-fit', config)
+    params = []
+    names = []
 
     # Load config parameters
-    data_path = config['data']['encoder-data-path']
-    prediction_path = config['output']['parameter-predictions-path']
-    log_params = config['model']['log-parameters']
+    for data_path in data_paths:
+        data = load_data(data_path, load_kwargs={'dtype': str})
 
-    with open(data_path, 'rb') as file:
-        data = pickle.load(file)
+        if '.pickle' in data_path:
+            if 'names' in data:
+                names.append(np.array(data['names']))
+            else:
+                names.append(np.arange(len(data['params']), dtype=float).astype(str))
 
-    target = np.array(data['params'])
-    predictions = np.loadtxt(prediction_path, delimiter=',', dtype=str)
+            data = np.array(data['params'])
+        elif '.csv' in data_path:
+            names.append(data[:, 0])
+            data = data[:, 1:].astype(float)
 
-    if 'names' in data:
-        spectra_names = np.array(data['names'])
-    else:
-        spectra_names = np.arange(target.shape[0], dtype=float).astype(str)
+        params.append(data)
+
+    # Sort for longest dataset first
+    sort_idx = np.argsort([param.shape[0] for param in params])[::-1]
+    params = [params[i] for i in sort_idx]
+    names = [names[i] for i in sort_idx]
 
     # Sort target spectra by name
-    sort_idx = np.argsort(spectra_names)
-    spectra_names = spectra_names[sort_idx]
-    target = target[sort_idx]
+    sort_idx = np.argsort(names[0])
+    names[0] = names[0][sort_idx]
+    params[0] = params[0][sort_idx]
 
     # Filter target parameters using spectra that was predicted and log parameters
-    target_idx = np.searchsorted(spectra_names, predictions[:, 0])
-    target = target[target_idx]
-    predictions = predictions[:, 1:].astype(float)
+    target_idx = np.searchsorted(names[0], names[1])
+    params[0] = params[0][target_idx]
+    shuffle_idx = np.random.permutation(params[0].shape[0])
+    params[0] = params[0][shuffle_idx]
+    params[1] = params[1][shuffle_idx]
 
-    if log_params:
-        target[:, log_params] = np.log10(target[:, log_params])
-        predictions[:, log_params] = np.log10(predictions[:, log_params])
-
-    return target, predictions
+    return np.swapaxes(params[0][:1000], 0, 1), np.swapaxes(params[1][:1000], 0, 1)
 
 
 def linear_weights(network: Network) -> ndarray:

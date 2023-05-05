@@ -2,11 +2,14 @@
 Creates several plots
 """
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from numpy import ndarray
 from matplotlib.axes import Axes
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+from fspnet.utils.utils import subplot_grid
+from fspnet.utils.analysis import param_comparison
 from fspnet.utils.data import load_data, load_x_data, data_normalization
 
 MAJOR = 24
@@ -31,10 +34,13 @@ def _legend(labels: ndarray, columns: int = 2):
         ncol=columns,
         bbox_to_anchor=(0.5, 0.91),
         fontsize=MAJOR,
-        markerscale=2,
         columnspacing=10,
     )
     legend.get_frame().set_alpha(None)
+
+    for handle in legend.legendHandles:
+        if isinstance(handle, matplotlib.collections.PathCollection):
+            handle.set_sizes([100])
 
 
 def _initialize_plot(
@@ -43,7 +49,7 @@ def _initialize_plot(
         x_label: str = None,
         y_label: str = None,
         plot_kwargs: dict = None,
-        gridspec_kw: dict = None) -> list[plt.Axes]:
+        gridspec_kw: dict = None) -> ndarray:
     """
     Initializes subplots using either mosaic or subplots
 
@@ -65,7 +71,7 @@ def _initialize_plot(
 
     Returns
     -------
-    list[Axes]
+    ndarray
         Subplot axes
     """
     gridspec = {
@@ -142,6 +148,7 @@ def _plot_loss(train_loss: list, val_loss: list):
     plt.plot(val_loss, label='Validation Loss')
     plt.xticks(fontsize=MINOR)
     plt.yticks(fontsize=MINOR)
+    plt.yticks(fontsize=MINOR, minor=True)
     plt.xlabel('Epoch', fontsize=MINOR)
     plt.ylabel('Loss', fontsize=MINOR)
     plt.yscale('log')
@@ -231,18 +238,25 @@ def _plot_reconstructions(spectra: ndarray, outputs: ndarray):
 def _plot_histogram(
         data: ndarray,
         axis: Axes,
+        log: bool = False,
+        labels: list[str] = None,
+        hist_kwargs: dict = None,
         data_twin: ndarray = None) -> None | Axes:
     """
     Plots a histogram subplot with twin data if provided
 
     Parameters
     ----------
-    title : string
-        Title of subplot
     data : ndarray
         Primary data to plot
     axis : Axes
         Axis to plot on
+    log : boolean, default = False
+        If data should be plotted on a log scale, expects linear data
+    labels : list[string], default = None
+        Labels for data and, if provided, data_twin
+    hist_kwargs : dictionary, default = None
+        Optional keyword arguments for plotting the histogram
     data_twin : ndarray, default = None
         Secondary data to plot
 
@@ -251,21 +265,31 @@ def _plot_histogram(
     None | Axes
         If data_twin is provided, returns twin axis
     """
-    axis.hist(data, bins=100, alpha=0.5, density=True, label='Target')
+    bins = bin_num = 100
+
+    if not labels:
+        labels = ['', '']
+
+    if not hist_kwargs:
+        hist_kwargs = {}
+
+    if log:
+        bins = np.logspace(np.log10(np.min(data)), np.log10(np.max(data)), bin_num)
+        axis.set_xscale('log')
+
+    axis.hist(data, bins=bins, alpha=0.5, label=labels[0], **hist_kwargs)
     axis.tick_params(labelsize=MINOR)
+    axis.ticklabel_format(axis='y', scilimits=(-2, 2))
 
     if data_twin is not None:
         twin_axis = axis.twinx()
-        twin_axis.hist(
+        _plot_histogram(
             data_twin,
-            bins=100,
-            alpha=0.5,
-            density=True,
-            label='Predicted',
-            color='orange',
+            twin_axis,
+            log=log,
+            labels=[labels[1]],
+            hist_kwargs={'color': 'orange'},
         )
-        twin_axis.tick_params(labelsize=MINOR)
-
         return twin_axis
 
     return None
@@ -337,33 +361,37 @@ def plot_param_pairs(data_paths: list[str], labels: list[str], config: dict):
     config : dictionary
         Configuration dictionary
     """
-    params = []
     log_params = config['model']['log-parameters']
     param_names = config['model']['parameter-names']
     plots_dir = config['output']['plots-directory']
 
     # Load data & shuffle
-    for data_path in data_paths:
-        data = load_data(data_path, columns=range(1, 6))
-        np.random.shuffle(data)
+    if len(data_paths) == 2:
+        params = param_comparison(data_paths)
+    else:
+        params = load_data(data_paths[0], load_kwargs={'usecols': range(1, 6)})
 
-        if log_params:
-            data[:, log_params] = np.log10(data[:, log_params])
+        if '.pickle' in data_paths[0]:
+            params = np.array(params['params'])
 
-        params.append(data)
+        np.random.shuffle(params)
+        params = [np.swapaxes(params, 0, 1)]
 
     # Initialize pair plots
     axes = _initialize_plot(
-        (params[0].shape[1],) * 2,
+        (params[0].shape[0],) * 2,
         legend=True,
         x_label=' ',
+        y_label=' ',
         plot_kwargs={'sharex': 'col'},
-        gridspec_kw={'right': 0.97, 'hspace': 0, 'wspace': 0.3},
+        gridspec_kw={'hspace': 0, 'wspace': 0},
     )
 
     # Loop through each subplot
-    for i, axes_col in enumerate(axes):
-        for j, axis in enumerate(axes_col):
+    for i, (axes_col, *y_param) in enumerate(zip(axes, *params)):
+        for j, (axis, *x_param) in enumerate(zip(axes_col, *params)):
+            log = False
+
             # Share y-axis for all scatter plots
             if i != j and i == 0:
                 axis.sharey(axes_col[1])
@@ -371,33 +399,55 @@ def plot_param_pairs(data_paths: list[str], labels: list[str], config: dict):
                 axis.sharey(axes_col[0])
 
             # Hide ticks for plots that aren't in the first column or bottom row
-            if i == len(axes_col) -1 and j == 0:
-                axis.tick_params(labelsize=MINOR)
-                axis.locator_params(axis='x', nbins=3)
-            elif i == len(axes_col) -1:
-                axis.tick_params(axis='x', labelsize=MINOR)
-                axis.locator_params(axis='x', nbins=3)
-                axis.tick_params(axis='y', labelsize=0)
-            elif j == 0 or (i == 0 and j == 1):
+            if j == 0 or (j == 1 and i == 0):
                 axis.tick_params(axis='y', labelsize=MINOR)
             else:
-                axis.tick_params(labelsize=0)
+                axis.tick_params(labelleft=False)
+
+            if i == len(axes_col) - 1:
+                axis.tick_params(axis='x', labelsize=MINOR)
+            else:
+                axis.tick_params(labelbottom=False)
+
+            # Convert axis for logged parameters to log scale
+            if j in log_params:
+                log = True
+                axis.set_xscale('log')
+                axis.locator_params(axis='x', numticks=3)
+            else:
+                axis.locator_params(axis='x', nbins=3)
+
+            if i in log_params and i != j:
+                axis.set_yscale('log')
+                axis.locator_params(axis='y', numticks=3)
+            else:
+                axis.locator_params(axis='y', nbins=3)
 
             # Plot scatter plots & histograms
             if i == j:
-                _plot_histogram(params[0][:, i], axis, data_twin=params[1][:, i])
+                twin_axis = _plot_histogram(x_param[0], axis, log=log, data_twin=x_param[1])
+                axis.tick_params(labelleft=False, left=False)
+                twin_axis.tick_params(labelright=False, right=False)
             elif j < i:
-                axis.scatter(params[0][:1000, j], params[0][:1000, i], alpha=0.2, label=labels[0])
-            elif len(params) > 1:
                 axis.scatter(
-                    params[1][:1000, j],
-                    params[1][:1000, i],
+                    x_param[0][:1000],
+                    y_param[0][:1000],
+                    s=4,
+                    alpha=0.2,
+                    label=labels[0],
+                )
+            else:
+                axis.remove()
+
+            if j < i and len(x_param) > 1:
+                axis.scatter(
+                    x_param[1][:1000],
+                    y_param[1][:1000],
+                    s=4,
                     alpha=0.2,
                     color='orange',
                     label=labels[1],
                 )
-            else:
-                axis.remove()
 
             # Bottom row parameter names
             if i == len(axes_col) - 1:
@@ -407,20 +457,16 @@ def plot_param_pairs(data_paths: list[str], labels: list[str], config: dict):
             if j == 0:
                 axis.set_ylabel(param_names[i], fontsize=MINOR)
 
-    _legend(np.hstack((
-        axes[-1, 0].get_legend_handles_labels(),
-        axes[0, -1].get_legend_handles_labels(),
-    )))
+    _legend(axes[-1, 0].get_legend_handles_labels())
     plt.savefig(f'{plots_dir}Parameter_Pairs.png')
 
 
 def plot_param_comparison(
         plots_dir: str,
         param_names: list[str],
-        target: ndarray,
-        predictions: ndarray):
+        config: dict):
     """
-    Plots predictions against target for each parameter
+    Plots prediction against target for each parameter
 
     Parameters:
     ----------
@@ -428,28 +474,44 @@ def plot_param_comparison(
         Directory to save plots
     param_names : list[string]
         List of parameter names
-    target : ndarray
-        Target parameters
-    predictions : ndarray
-        Parameter predictions
+    config: dictionary
+        Configuration dictionary
     """
-    _, axes = plt.subplot_mosaic('AABBCC;DDDEEE', constrained_layout=True, figsize=FIG_SIZE)
+    log_params = config['model']['log-parameters']
+    target, prediction = param_comparison((
+        config['data']['encoder-data-path'],
+        config['output']['parameter-predictions-path'],
+    ))
+
+    _, axes = plt.subplot_mosaic(
+        subplot_grid(len(param_names)),
+        constrained_layout=True,
+        figsize=FIG_SIZE,
+    )
 
     # Plot each parameter
-    for i, axis in enumerate(axes.values()):
+    for i, (name, axis, target_param, predicted_param) in enumerate(zip(
+        param_names,
+        axes.values(),
+        target,
+        prediction)):
         value_range = [
-            min(np.min(target[:, i]), np.min(predictions[:, i])),
-            max(np.max(target[:, i]), np.max(predictions[:, i]))
+            min(np.min(target_param), np.min(predicted_param)),
+            max(np.max(target_param), np.max(predicted_param))
         ]
-        axis.scatter(target[:1000, i], predictions[:1000, i], alpha=0.2)
+        axis.scatter(target_param, predicted_param, alpha=0.2)
         axis.plot(value_range, value_range, color='k')
-        axis.set_title(param_names[i], fontsize=MAJOR)
+        axis.set_title(name, fontsize=MAJOR)
         axis.tick_params(labelsize=MINOR)
+
+        if i in log_params:
+            axis.set_xscale('log')
+            axis.set_yscale('log')
 
     plt.savefig(f'{plots_dir}Parameter_Comparison.png', transparent=False)
 
 
-def plot_param_distribution(name: str, data_paths: list[str], config: dict):
+def plot_param_distribution(name: str, data_paths: list[str], labels: list[str], config: dict):
     """
     Plots histogram of each parameter for both true and predicted
 
@@ -459,6 +521,8 @@ def plot_param_distribution(name: str, data_paths: list[str], config: dict):
         Name to save the plot
     data_paths : list[string]
         Paths to the parameters to plot
+    labels : list[string]
+        Legend labels for each data path
     config : dictionary
         Configuration dictionary
     """
@@ -468,30 +532,32 @@ def plot_param_distribution(name: str, data_paths: list[str], config: dict):
     plots_dir = config['output']['plots-directory']
 
     axes = _initialize_plot(
-        'AABBCC;DDDEEE',
+        subplot_grid(len(param_names)),
         legend=True,
         gridspec_kw={'bottom': 0.1, 'right': 0.95, 'hspace': 0.25},
     )
 
     for data_path in data_paths:
-        data = load_data(data_path, columns=range(1, 6))
+        data = load_data(data_path, load_kwargs={'usecols': range(1, 6)})
 
-        if log_params:
-            data[:, log_params] = np.log10(data[:, log_params])
+        if '.pickle' in data_path:
+            data = data['params']
 
-        params.append(np.rollaxis(data, axis=1))
+        params.append(np.swapaxes(data, 0, 1))
 
     # Plot subplots
-    for (
-        title,
-        *param,
-        axis,
-    ) in zip(param_names, *params, axes.values()):
-        twin_axis = _plot_histogram(param[0], axis, data_twin=param[1])
+    for i, (title, *param, axis) in enumerate(zip(param_names, *params, axes.values())):
+        log = False
+
+        if i in log_params:
+            axis.set_xscale('log')
+            log = True
+
+        twin_axis = _plot_histogram(param[0], axis, log=log, labels=labels, data_twin=param[1])
         axis.set_xlabel(title, fontsize=MAJOR)
 
     _legend(np.hstack((
-        axes['A'].get_legend_handles_labels(),
+        axes[0].get_legend_handles_labels(),
         twin_axis.get_legend_handles_labels(),
     )))
     plt.savefig(plots_dir + name)

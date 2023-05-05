@@ -44,10 +44,10 @@ class Reshape(nn.Module):
         Tensor
             Output tensor
         """
-        return x.view(x.size(0), *self.shape)
+        return x.contiguous().view(x.size(0), *self.shape)
 
 
-class GRUOutput(nn.Module):
+class RecurrentOutput(nn.Module):
     """
     GRU wrapper for compatibility with network & can handle output of bidirectional GRUs
 
@@ -63,7 +63,7 @@ class GRUOutput(nn.Module):
     forward(x)
         Returns
     """
-    def __init__(self, bidirectional: str = None):
+    def __init__(self, recurrent_layer: nn.Module, bidirectional: str = None):
         """
         Parameters
         ----------
@@ -75,6 +75,7 @@ class GRUOutput(nn.Module):
         super().__init__()
         self.options = [None, 'sum', 'mean', 'concatenate']
         self.bidirectional = bidirectional
+        self.recurrent_layer = recurrent_layer
 
         if self.bidirectional not in self.options:
             raise ValueError(
@@ -95,18 +96,17 @@ class GRUOutput(nn.Module):
         Tensor, shape (N, 1, L)
             Output tensor
         """
-        output = x[0]
+        x = self.recurrent_layer(torch.transpose(x, 1, 2))[0]
 
-        if self.bidirectional:
-            output = output.view(*output.size()[:2], 2, -1)
+        if self.bidirectional and self.bidirectional != self.options[3]:
+            x = x.view(*x.size()[:2], 2, -1)
 
             if self.bidirectional == self.options[1]:
-                output = torch.sum(output, dim=-2)
+                x = torch.sum(x, dim=-2)
             elif self.bidirectional == self.options[2]:
-                output = torch.mean(output, dim=-2)
-            elif self.bidirectional == self.options[3]:
-                output = torch.cat([output[..., 0, :], output[..., 1, :]], dim=1)
-        return output
+                x = torch.mean(x, dim=-2)
+
+        return torch.transpose(x, 1, 2)
 
 
 class PixelShuffle1d(nn.Module):
@@ -278,10 +278,11 @@ def linear(kwargs: dict, layer: dict) -> dict:
 
     # Optional layers
     _optional_layer(False, 'dropout', kwargs, layer, nn.Dropout1d(kwargs['dropout_prob']))
+    _optional_layer(False, 'batch_norm', kwargs, layer, nn.BatchNorm1d(kwargs['dims'][-1]))
     _optional_layer(True, 'activation', kwargs, layer, nn.SELU())
 
     # Data size equals number of nodes
-    kwargs['data_size'] = kwargs['dims'][-1]
+    kwargs['data_size'].append(kwargs['dims'][-1])
 
     return kwargs
 
@@ -355,12 +356,16 @@ def convolutional(kwargs: dict, layer: dict) -> dict:
     _optional_layer(True, 'activation', kwargs, layer, nn.ELU())
 
     if padding != 'same':
-        kwargs['data_size'] = int((kwargs['data_size'] + 2 * padding - kernel_size) / stride + 1)
+        kwargs['data_size'].append(int(
+            (kwargs['data_size'][-1] + 2 * padding - kernel_size) / stride + 1
+        ))
+    else:
+        kwargs['data_size'].append(kwargs['data_size'][-1])
 
     return kwargs
 
 
-def gru(kwargs: dict, layer: dict) -> dict:
+def recurrent(kwargs: dict, layer: dict) -> dict:
     """
     Gated recurrent unit (GRU) layer constructor
 
@@ -401,46 +406,54 @@ def gru(kwargs: dict, layer: dict) -> dict:
         layers = 2
 
     try:
-        factor = layer['factor']
+        kwargs['dims'].append(layer['filters'])
     except KeyError:
-        factor = 1
+        kwargs['dims'].append(1)
 
     try:
         bidirectional = layer['bidirectional']
 
         if bidirectional == 'None':
             bidirectional = None
-            kwargs['dims'].append(kwargs['dims'][-1])
-        elif bidirectional == 'concatenate':
-            kwargs['dims'].append(kwargs['dims'][-1] * 2)
     except KeyError:
         bidirectional = None
-        kwargs['dims'].append(kwargs['dims'][-1])
 
     if layers > 1 and (('dropout' in layer and layer['dropout']) or 'dropout' not in layer):
         dropout_prob = kwargs['dropout_prob']
     else:
         dropout_prob = 0
 
-    gru_layer = nn.GRU(
-        input_size=kwargs['data_size'],
-        hidden_size=kwargs['data_size'] * factor,
-        num_layers=layers,
-        batch_first=True,
-        dropout=dropout_prob,
-        bidirectional=bidirectional is not None,
-    )
+    recurrent_kwargs = {
+        'input_size': kwargs['dims'][-2],
+        'hidden_size': kwargs['dims'][-1],
+        'num_layers': layers,
+        'batch_first': True,
+        'dropout': dropout_prob,
+        'bidirectional': bidirectional is not None,
+    }
 
-    kwargs['module'].add_module(f"GRU_{kwargs['i']}", gru_layer)
+    if bidirectional == 'concatenate':
+        kwargs['dims'][-1] *= 2
+
+    try:
+        if layer['method'] == 'rnn':
+            recurrent_layer = nn.RNN(**recurrent_kwargs, nonlinearity='relu')
+        elif layer['method'] == 'lstm':
+            recurrent_layer = nn.LSTM(**recurrent_kwargs)
+        else:
+            recurrent_layer = nn.GRU(**recurrent_kwargs)
+    except KeyError:
+        recurrent_layer = nn.GRU(**recurrent_kwargs)
+
     kwargs['module'].add_module(
         f"GRU_output_{kwargs['i']}",
-        GRUOutput(bidirectional=bidirectional)
+        RecurrentOutput(recurrent_layer, bidirectional=bidirectional)
     )
 
     _optional_layer(True, 'activation', kwargs, layer, nn.ELU())
+    _optional_layer(False, 'batch_norm', kwargs, layer, nn.BatchNorm1d(kwargs['dims'][-1]))
 
-    # Data size doubles
-    kwargs['data_size'] *= factor
+    kwargs['data_size'].append(kwargs['data_size'][-1])
 
     return kwargs
 
@@ -469,7 +482,10 @@ def linear_upscale(kwargs: dict, _: dict) -> dict:
     dictionary
         Returns the input kwargs with any changes made by the function
     """
-    linear_layer = nn.Linear(in_features=kwargs['data_size'], out_features=kwargs['data_size'] * 2)
+    linear_layer = nn.Linear(
+        in_features=kwargs['data_size'][-1],
+        out_features=kwargs['data_size'][-1] * 2,
+    )
 
     kwargs['module'].add_module(f"reshape_{kwargs['i']}", Reshape([-1]))
     kwargs['module'].add_module(f"linear_{kwargs['i']}", linear_layer)
@@ -477,7 +493,7 @@ def linear_upscale(kwargs: dict, _: dict) -> dict:
     kwargs['module'].add_module(f"reshape_{kwargs['i']}", Reshape([1, -1]))
 
     # Data size doubles
-    kwargs['data_size'] *= 2
+    kwargs['data_size'].append(kwargs['data_size'][-1] * 2)
     kwargs['dims'].append(1)
 
     return kwargs
@@ -523,7 +539,7 @@ def conv_upscale(kwargs: dict, layer: dict) -> dict:
     kwargs['dims'][-1] = int(kwargs['dims'][-1] / 2)
 
     # Data size doubles
-    kwargs['data_size'] *= 2
+    kwargs['data_size'].append(kwargs['data_size'][-1] * 2)
 
     return kwargs
 
@@ -577,7 +593,7 @@ def conv_transpose(kwargs: dict, layer: dict) -> dict:
     _optional_layer(True, 'activation', kwargs, layer, nn.ELU())
 
     # Data size doubles
-    kwargs['data_size'] *= 2
+    kwargs['data_size'].append(kwargs['data_size'][-1] * 2)
 
     return kwargs
 
@@ -611,7 +627,7 @@ def upsample(kwargs: dict, _: dict) -> dict:
         nn.Upsample(scale_factor=2, mode='linear')
     )
     # Data size doubles
-    kwargs['data_size'] *= 2
+    kwargs['data_size'].append(kwargs['data_size'][-1] * 2)
 
     return kwargs
 
@@ -719,7 +735,7 @@ def pool(kwargs: dict, _: dict) -> dict:
     kwargs['module'].add_module(f"pool_{kwargs['i']}", nn.MaxPool1d(kernel_size=2))
 
     # Data size halves
-    kwargs['data_size'] = int(kwargs['data_size'] / 2)
+    kwargs['data_size'].append(int(kwargs['data_size'][-1] / 2))
 
     return kwargs
 
@@ -750,15 +766,15 @@ def reshape(kwargs: dict, layer: dict) -> dict:
     """
     # If reshape reduces the number of dimensions
     if len(layer['output']) == 1:
-        kwargs['dims'].append(kwargs['data_size'] * kwargs['dims'][-1])
+        kwargs['dims'].append(kwargs['data_size'][-1] * kwargs['dims'][-1])
 
         # Data size equals the previous size multiplied by the previous dimension
-        kwargs['data_size'] = kwargs['dims'][-1]
+        kwargs['data_size'].append(kwargs['dims'][-1])
     else:
         kwargs['dims'].append(layer['output'][0])
 
         # Data size equals the previous size divided by the first shape dimension
-        kwargs['data_size'] = int(kwargs['dims'][-2] / kwargs['dims'][-1])
+        kwargs['data_size'].append(int(kwargs['data_size'][-1] / kwargs['dims'][-1]))
 
     kwargs['module'].add_module(
         f"reshape_{kwargs['i']}",
@@ -805,7 +821,7 @@ def sample(kwargs: dict, layer: dict) -> dict:
     except KeyError:
         kwargs['dims'].append(layer['features'])
 
-    kwargs['data_size'] = kwargs['dims'][-1]
+    kwargs['data_size'].append(kwargs['dims'][-1])
     kwargs['module'].add_module(
         f"sample_{kwargs['i']}",
         Sample(kwargs['dims'][-2], kwargs['dims'][-1]),
@@ -834,7 +850,7 @@ def extract(kwargs: dict, layer: dict) -> dict:
         Returns the input kwargs with any changes made by the function
     """
     kwargs['dims'].append(kwargs['dims'][-1] - layer['number'])
-    kwargs['data_size'] = kwargs['dims'][-1]
+    kwargs['data_size'].append(kwargs['dims'][-1])
     return kwargs
 
 
@@ -856,6 +872,7 @@ def clone(kwargs: dict, _: dict) -> dict:
         Returns the input kwargs with any changes made by the function
     """
     kwargs['dims'].append(kwargs['dims'][-1])
+    kwargs['data_size'].append(kwargs['data_size'][-1])
     return kwargs
 
 
@@ -878,10 +895,11 @@ def concatenate(kwargs: dict, layer: dict) -> dict:
         Returns the input kwargs with any changes made by the function
     """
     kwargs['dims'].append(kwargs['dims'][-1] + kwargs['dims'][layer['layer']])
+    kwargs['data_size'].append(kwargs['data_size'][-1])
     return kwargs
 
 
-def shortcut(kwargs: dict, _: dict) -> dict:
+def shortcut(kwargs: dict, layer: dict) -> dict:
     """
     Constructs a shortcut layer to add the outputs from two layers
 
@@ -890,13 +908,37 @@ def shortcut(kwargs: dict, _: dict) -> dict:
     kwargs : dictionary
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
-    _ : dictionary
-        For compatibility
+    layer : dictionary
+        layer : integer
+            Layer index to add the previous layer output with;
 
     Returns
     -------
     dictionary
         Returns the input kwargs with any changes made by the function
     """
-    kwargs['dims'].append(kwargs['dims'][-1])
+    if kwargs['dims'][-1] == 1:
+        kwargs['dims'].append(kwargs['dims'][layer['layer']])
+    else:
+        kwargs['dims'].append(kwargs['dims'][-1])
+
+    kwargs['data_size'].append(kwargs['data_size'][-1])
+    return kwargs
+
+
+def skip(kwargs: dict, layer: dict) -> dict:
+    """
+    Bypasses previous layers by retrieving the output from the defined layer
+
+    Parameters
+    ----------
+    kwargs : dictionary
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+    layer : dictionary
+        layer : integer
+            Layer index to retrieve the output;
+    """
+    kwargs['dims'].append(kwargs['dims'][layer['layer']])
+    kwargs['data_size'].append(kwargs['data_size'][layer['layer']])
     return kwargs

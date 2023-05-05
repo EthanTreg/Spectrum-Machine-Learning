@@ -351,11 +351,10 @@ plot_training('Decoder', config['output']['plots-directory'], *decoder_return)
 
 If you have previously fitted parameters,
 you can compare the performance of the network for each parameter using the functions
-`param_comparison`, `plot_param_comparison`, and `plot_param_distribution` from the modules
-`fspnet.utils.analysis` and `fspnet.utils.plots`.
+`plot_param_comparison`, and `plot_param_distribution` from the module `fspnet.utils.plots`.
 
-`param_comparison` and `plot_param_comparison` are used to plot parameter predictions against
-fitted parameters for each parameter.
+`plot_param_comparison` is used to plot parameter predictions
+against fitted parameters for each parameter.
 
 `plot_param_distribution` shows how the parameter predictions are distributed
 compared to the fitted parameters.
@@ -373,22 +372,18 @@ In addition to this, several parameters in the `spectrum-fit` config file need c
 **Example code**
 
 ```python
-from fspnet.spectrum_fit import initialization, predict_parameters
-from fspnet.utils.analysis import param_comparison
+from fspnet.spectrum_fit import predict_parameters
 from fspnet.utils.plots import plot_param_comparison, plot_param_distribution
 
 plots_dir = config['output']['plots-directory']
 param_names = config['model']['parameter-names']
 
-e_loaders = initialization(...)[2]
-
 predict_parameters(config=config)
-comparison_output = param_comparison(config=config)
 
 plot_param_comparison(
     plots_dir,
     param_names,
-    *comparison_output,
+    config,
 )
 plot_param_distribution(
     plots_dir,

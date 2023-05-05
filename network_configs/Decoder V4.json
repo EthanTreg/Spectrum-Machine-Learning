@@ -1,0 +1,49 @@
+{
+  "net": {
+    "dropout_prob": 0.1
+  },
+  "layers": [
+    {
+      "type": "linear",
+      "factor": 0.125
+    },
+    {
+      "type": "linear",
+      "factor": 0.25
+    },
+    {
+      "type": "linear",
+      "factor": 0.25
+    },
+    {
+      "type": "reshape",
+      "output": [1, -1]
+    },
+    {
+      "type": "convolutional",
+      "filters": 32
+    },
+    {
+      "type": "conv_transpose",
+      "filters": 16
+    },
+    {
+      "type": "convolutional",
+      "filters": 32,
+      "batch_norm": 1
+    },
+    {
+      "type": "conv_transpose",
+      "filters": 8
+    },
+    {
+      "type": "recurrent"
+    },
+    {
+      "type": "convolutional",
+      "filters": 2,
+      "kernel": 1,
+      "dropout": 0
+    }
+  ]
+}

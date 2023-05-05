@@ -1,0 +1,53 @@
+{
+  "net": {
+    "dropout_prob": 0.001
+  },
+  "layers": [
+    {
+      "type": "linear",
+      "factor": 0.5
+    },
+    {
+      "type": "linear",
+      "factor": 0.5
+    },
+    {
+      "type": "linear",
+      "factor": 1,
+      "dropout": 1
+    },
+    {
+      "type": "linear",
+      "factor": 1
+    },
+    {
+      "type": "linear",
+      "factor": 1,
+      "dropout": 1
+    },
+    {
+      "type": "shortcut",
+      "layer": -3
+    },
+    {
+      "type": "shortcut",
+      "layer": -3
+    },
+    {
+      "type": "reshape",
+      "output": [1, -1]
+    },
+    {
+      "type": "recurrent",
+      "bidirectional": "mean"
+    },
+    {
+      "type": "reshape",
+      "output": [-1]
+    },
+    {
+      "type": "linear",
+      "factor": 1
+    }
+  ]
+}

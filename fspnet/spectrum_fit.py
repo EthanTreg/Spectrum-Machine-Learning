@@ -17,7 +17,6 @@ from fspnet.utils.network import load_network, Network
 from fspnet.utils.analysis import (
     autoencoder_saliency,
     decoder_saliency,
-    param_comparison,
     linear_weights,
 )
 from fspnet.utils.plots import (
@@ -290,23 +289,23 @@ def main(config_path: str = '../config.yaml'):
 
     # Generate parameter predictions
     predict_parameters(config=config, encoder=encoder)
-    comparison_output = param_comparison(config=config)
     plot_param_comparison(
         plots_dir,
         param_names,
-        *comparison_output,
+        config,
     )
     plot_param_distribution(
         'Decoder_Param_Distribution',
         [d_data_path, predictions_path],
+        ['Target', 'Prediction'],
         config,
     )
     plot_param_distribution(
         'Encoder_Param_Distribution',
         [e_data_path, predictions_path],
+        ['Target', 'Prediction'],
         config,
     )
-
     plot_param_pairs([e_data_path, predictions_path], ['Targets', 'Predictions'], config)
 
     # Calculate saliencies

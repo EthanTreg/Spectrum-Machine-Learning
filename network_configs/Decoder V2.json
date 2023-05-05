@@ -5,11 +5,11 @@
   "layers": [
     {
       "type": "linear",
-      "factor": 0.0625
+      "factor": 0.125
     },
     {
       "type": "linear",
-      "factor": 0.125
+      "factor": 0.25
     },
     {
       "type": "linear",
@@ -25,8 +25,7 @@
     },
     {
       "type": "conv_transpose",
-      "filters": 16,
-      "batch_norm": 1
+      "filters": 16
     },
     {
       "type": "convolutional",
@@ -34,11 +33,11 @@
       "batch_norm": 1
     },
     {
-      "type": "conv_upscale",
+      "type": "conv_transpose",
       "filters": 8
     },
     {
-      "type": "gru"
+      "type": "recurrent"
     },
     {
       "type": "conv_depth_downscale"

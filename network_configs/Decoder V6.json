@@ -1,0 +1,81 @@
+{
+  "net": {
+    "dropout_prob": 0.02
+  },
+  "layers": [
+    {
+      "type": "linear",
+      "factor": 0.5
+    },
+    {
+      "type": "linear",
+      "factor": 0.5
+    },
+    {
+      "type": "linear",
+      "factor": 1,
+      "dropout": 1
+    },
+    {
+      "type": "linear",
+      "factor": 1,
+      "dropout": 1
+    },
+    {
+      "type": "linear",
+      "factor": 1,
+      "dropout": 1
+    },
+    {
+      "type": "shortcut",
+      "layer": -3
+    },
+    {
+      "type": "shortcut",
+      "layer": -3
+    },
+    {
+      "type": "reshape",
+      "output": [1, -1]
+    },
+    {
+      "type": "convolutional",
+      "filters": 16,
+      "kernel": 9,
+      "batch_norm": 1
+    },
+    {
+      "type": "convolutional",
+      "filters": 16,
+      "kernel": 5
+    },
+    {
+      "type": "convolutional",
+      "filters": 16
+    },
+    {
+      "type": "shortcut",
+      "layer": -3
+    },
+    {
+      "type": "shortcut",
+      "layer": -3
+    },
+    {
+      "type": "recurrent",
+      "bidirectional": "mean"
+    },
+    {
+      "type": "shortcut",
+      "layer": -2
+    },
+    {
+      "type": "reshape",
+      "output": [-1]
+    },
+    {
+      "type": "linear",
+      "factor": 1
+    }
+  ]
+}

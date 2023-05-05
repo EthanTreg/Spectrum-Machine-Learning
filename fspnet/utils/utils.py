@@ -34,6 +34,73 @@ def progress_bar(i: int, total: int, text: str = ''):
         print()
 
 
+def closest_factors(num: int) -> tuple[int, int]:
+    """
+    Finds the closest factors for a given integer
+
+    Parameters
+    ----------
+    num : integer
+        Number to find the closest factors for
+
+    Returns
+    -------
+    tuple[integer, integer]
+        Two closest factors
+    """
+    factor = int(np.floor(np.sqrt(num)))
+
+    while num % factor:
+        factor -= 1
+
+    return factor, int(num / factor)
+
+
+def subplot_grid(num: int) -> np.ndarray:
+    """
+    Calculates the most square grid for a given input for mosaic subplots
+
+    Parameters
+    ----------
+    num : integer
+        Total number to split into a mosaic grid
+
+    Returns
+    -------
+    ndarray
+        2D array of indices with relative width for mosaic subplot
+    """
+    # Constants
+    grid = (int(np.sqrt(num)), int(np.ceil(np.sqrt(num))))
+    subplot_layout = np.arange(num)
+    diff_row = np.abs(num - np.prod(grid))
+
+    # If number is not divisible into a square-ish grid,
+    # then the total number will be unevenly divided across the rows
+    if diff_row and diff_row != grid[0]:
+        shift_num = diff_row * (grid[1] + np.sign(num - np.prod(grid)))
+
+        # Layout of index and repeated values to correspond to the width of the index
+        subplot_layout = np.vstack((
+            np.repeat(
+                subplot_layout[:-shift_num],
+                int(shift_num / diff_row)
+            ).reshape(grid[0] - diff_row, -1),
+            np.repeat(
+                subplot_layout[-shift_num:],
+                int((num - shift_num) / (grid[0] - diff_row))
+            ).reshape(diff_row, -1),
+        ))
+    # If a close to square grid is found
+    elif diff_row:
+        subplot_layout = subplot_layout.reshape(grid[0], grid[1] + 1)
+    # If grid is square
+    else:
+        subplot_layout = subplot_layout.reshape(*grid)
+
+    return subplot_layout
+
+
 def file_names(data_dir: str, blacklist: list[str] = None, whitelist: str = None) -> np.ndarray:
     """
     Fetches the file names of all spectra that are in the whitelist, if not None,

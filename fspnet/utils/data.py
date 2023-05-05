@@ -77,9 +77,8 @@ class SpectrumDataset(Dataset):
             self.spectra = _min_clamp(self.spectra, axis=1)
 
         # Transform spectra & uncertainty
-        self.spectra = np.log10(self.spectra)
         self.spectra, self.transform[0] = data_normalization(
-            self.spectra,
+            np.log10(self.spectra),
             mean=False,
             transform=self.transform[0],
         )
@@ -194,7 +193,7 @@ def _min_clamp(data: np.ndarray, axis: int = None) -> np.ndarray:
     return np.maximum(data, min_count)
 
 
-def load_data(data_path: str, columns: list[int] | range = None) -> ndarray:
+def load_data(data_path: str, load_kwargs: dict = None) -> dict | ndarray:
     """
     Loads data from either a csv, pickle or numpy file
 
@@ -202,23 +201,22 @@ def load_data(data_path: str, columns: list[int] | range = None) -> ndarray:
     ----------
     data_path : string
         Path to the data
-    columns : list[integer] | range, default = None
-        If data is a csv file, then columns can be used to specify which columns to load
+    load_kwargs : dictionary, default = None
+        Optional arguments to pass into np.loadtxt for .csv
 
     Returns
     -------
-    ndarray
-        Data loaded from the file
+    dictionary | ndarray
+        Data loaded from the file, dictionary if file is .pickle
     """
+    if not load_kwargs:
+        load_kwargs = {}
+
     if '.csv' in data_path:
-        data = np.loadtxt(
-            data_path,
-            delimiter=',',
-            usecols=columns,
-        )
+        data = np.loadtxt(data_path, delimiter=',', **load_kwargs)
     elif '.pickle' in data_path:
         with open(data_path, 'rb') as file:
-            data = np.array(pickle.load(file)['params'])
+            data = pickle.load(file)
     else:
         data = np.load(data_path)
 

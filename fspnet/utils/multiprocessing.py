@@ -4,6 +4,7 @@ Utility functions for multiprocessing
 import os
 import re
 import subprocess
+import logging as log
 from time import time
 
 from fspnet.utils.utils import progress_bar
@@ -59,7 +60,8 @@ def mpi_multiprocessing(cpus: int, total: int, arg: str):
                 progress_bar(count, total + 1, text=text)
                 text = ''
             elif 'error' in line.lower():
-                print(line)
+                print()
+                log.error(f'Multiprocessing error:\n{line}')
 
 
     print(f'\nWorkers finished\tTime: {time() - initial_time:.3e} s')
