@@ -9,6 +9,27 @@ import torch
 import numpy as np
 
 
+def _interactive_check() -> bool:
+    """
+    Checks if the launch environment is interactive or not
+
+    Returns
+    -------
+    boolean
+        If environment is interactive
+    """
+    if os.getenv('PYCHARM_HOSTED'):
+        return True
+
+    try:
+        if get_ipython().__class__.__name__:
+            return True
+    except NameError:
+        return False
+
+    return False
+
+
 def progress_bar(i: int, total: int, text: str = ''):
     """
     Terminal progress bar
@@ -167,17 +188,18 @@ def open_config(key: str, config_path: str, parser: ArgumentParser = None) -> tu
     tuple[string, dictionary]
         Configuration path and configuration file dictionary
     """
-    if not parser:
-        parser = ArgumentParser()
+    if not _interactive_check():
+        if not parser:
+            parser = ArgumentParser()
 
-    parser.add_argument(
-        '--config_path',
-        default=config_path,
-        help='Path to the configuration file',
-        required=False,
-    )
-    args = parser.parse_args()
-    config_path = args.config_path
+        parser.add_argument(
+            '--config_path',
+            default=config_path,
+            help='Path to the configuration file',
+            required=False,
+        )
+        args = parser.parse_args()
+        config_path = args.config_path
 
     with open(config_path, 'rb') as file:
         config = yaml.safe_load(file)[key]

@@ -10,41 +10,39 @@ from torch.utils.data import DataLoader
 
 from fspnet.utils.network import Network
 from fspnet.utils.utils import get_device
+from fspnet.utils.data import load_params
 from fspnet.utils.multiprocessing import check_cpus, mpi_multiprocessing
 
 
-def _xspec_loss(
+def pyxspec_test(
         worker_dir: str,
-        names: list[str],
-        params: np.ndarray,
+        params: str | tuple[np.ndarray, np.ndarray],
         cpus: int = 1,
-        job_name: str = None) -> float:
+        job_name: str = None):
     """
     Calculates the PGStat loss using PyXspec
-    Done using multiprocessing if >2 cores available
+    Done using multiprocessing if > 2 cores available
 
     Parameters
     ----------
     worker_dir : string
         Directory to where to save worker data
-    names : list[string]
-        Spectra names
-    params : ndarray
-        Parameter predictions from CNN
+    params : string | tuple[ndarray, ndarray]
+        Path to the parameter predictions or tuple of spectra file names and parameter predictions
     cpus : integer, default = 1
         Number of threads to use, 0 will use all available
     job_name : string, default = None
         If not None, file name to save the output to
-
-    Returns
-    -------
-    float
-        Average loss
     """
     # Initialize variables
     data = []
-
     cpus = check_cpus(cpus)
+
+    # Load parameters if file path provided
+    if isinstance(params, str):
+        names, params = load_params(params, load_kwargs={'dtype': str})
+    else:
+        names, params = params
 
     # Divide work between workers
     worker_names = np.array_split(names, cpus)
@@ -69,71 +67,7 @@ def _xspec_loss(
         np.savetxt(f'{worker_dir}{job_name}.csv', data, delimiter=',', fmt='%s')
 
     # Median loss
-    return float(np.median(data[:, -1].astype(float)))
-
-
-def pyxspec_test(
-        worker_dir: str,
-        loader: DataLoader,
-        cpus: int = 1,
-        job_name: str = None,
-        defaults: torch.Tensor = None,
-        encoder: Network = None):
-    """
-    If encoder is provided, creates predictions for each spectrum, otherwise, uses true parameters
-    then calculates loss
-
-    Parameters
-    ----------
-    worker_dir : string
-        Directory to where to save worker data
-    loader : DataLoader
-        PyTorch DataLoader that contains data to train
-    cpus : integer, default = 1
-        Number of threads to use, 0 will use all available
-    job_name : string, default = None
-        If not None, file name to save the output to
-    defaults : Tensor, default = None
-        If default parameters should be used
-    encoder : Network, default = None
-        Encoder to predict parameters, if None, true parameters will be used
-    """
-    # Initialize variables
-    initial_time = time()
-    names = []
-    params = []
-    log_params = loader.dataset.dataset.log_params
-    param_transform = loader.dataset.dataset.transform[1]
-
-    if encoder:
-        encoder.eval()
-
-    # Initialize processes for multiprocessing of encoder loss calculation
-    with torch.no_grad():
-        for data in loader:
-            names.extend(data[-1])
-
-            # Use defaults if provided, else if encoder is provided, generate predictions,
-            # else get true parameters
-            if defaults is not None:
-                param_batch = defaults.repeat(data[0].size(0), 1)
-            elif encoder:
-                param_batch = encoder(data[0].to(get_device()[1])).cpu()
-            else:
-                param_batch = data[1]
-
-            # Transform parameters if not defaults
-            if defaults is None:
-                param_batch = param_batch * param_transform[1] + param_transform[0]
-                param_batch[:, log_params] = 10 ** param_batch[:, log_params]
-
-            params.append(param_batch)
-
-    params = torch.cat(params)
-    print(f'Parameter retrieval time: {time() - initial_time:.3e} s')
-
-    loss = _xspec_loss(worker_dir, names, params.numpy(), cpus=cpus, job_name=job_name)
-    print(f'Reduced PGStat Loss: {loss:.3e}')
+    print(f'Reduced PGStat Loss: {np.median(data[:, -1].astype(float)):.3e}')
 
 
 def train_val(

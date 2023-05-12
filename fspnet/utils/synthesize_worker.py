@@ -184,7 +184,7 @@ def _generate_synth(
 
     # Generate fake spectrum
     model.setPars(params)
-    xspec.AllData.fakeit(nSpectra=1, settings=fake_base, applyStats=False, noWrite=True)
+    xspec.AllData.fakeit(nSpectra=1, settings=fake_base, applyStats=True, noWrite=True)
 
     return np.fromiter(params.values(), dtype=float)[fixed_num:]
 

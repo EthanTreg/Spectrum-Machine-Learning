@@ -42,9 +42,11 @@
 
 ### 2.1 Description
 
-FSP-Net is an autoencoder with two halves, an encoder and a decoder.  
+FSP-Net is an autoencoder with two halves, an encoder (blue box) and a decoder (red box).  
 The encoder is used to predict spectral parameters from spectra,
 while the decoder reconstructs spectra from spectral parameters.
+
+![Diagram showing the encoder and decoder that make up the autoencoder](./FSP-Net.png)
 
 ### 2.2 System Specification
 
@@ -63,9 +65,9 @@ set `kwargs={}` in `spectrum_fit.py`&rarr;`initialization`
 
 ### 2.3 Training Times
 Training the decoder for 200 epochs with 100,000 spectra
-takes around 15 minutes on the GPU and 70 minutes on the CPU.  
+takes around 20 minutes on the GPU and 370 minutes on the CPU.  
 Training the encoder for 200 epochs with 10,800 spectra
-takes around 3 minutes on the GPU and 23 minutes on the CPU.
+takes around 3 minutes on the GPU and 43 minutes on the CPU.
 
 ### 2.4 Data Compatibility
 The network is designed for data from black hole X-ray binaries from the
@@ -74,8 +76,6 @@ It has **not been tested** on data collected by **other instruments** or for **d
 so retraining will likely be required.  
 However, the idea is that this network can be applied to several applications,
 so feel free to adapt it and train it to different use cases.
-
-![Diagram showing the encoder and decoder that make up the autoencoder](./FSP-Net.png)
 
 ## 3 How to Use
 
@@ -94,7 +94,7 @@ All file paths can be absolute or relative.
 
 ### 3.1 Using the Pre-Trained FSP-Net
 
-The network has been trained on a simple 5-parameter model from Xspec, tbabs(simplcutx(ezdiskbb)).  
+The network has been trained on a simple 5-parameter model from Xspec, _TBabs(simplcutx$\otimes$ezdiskbb)_.  
 Therefore, weights are provided if this is the desired model for parameter prediction.
 
 #### 3.1.1 Data Requirements
@@ -134,9 +134,9 @@ If your data doesn't meet the requirements above,
 To configure the network, first check the settings under `spectrum-fit`:
 * `training` options:
   * `encoder-load`: 1
-  * `encoder-name`: 'Encoder V3'
+  * `encoder-name`: 'Encoder V8'
   * `network-configs-directory`: `'../network_configs/'`,
-    make sure this directory exists/is correct and contains the file `Encoder V3.json`
+    make sure this directory exists/is correct and contains the file `Encoder V8.json`
 * `data` options:
   * `encoder-data-path`: _path to your data file
     containing the spectra that you want parameters for_
@@ -222,7 +222,7 @@ The following steps assumes you are using the recommended method.
       * `encoder-load`: 0
       * `epochs`: _recommended 100_, more is better, but takes longer and has diminishing returns
       * `network-configs-directory`: `'../network_configs/'`,
-      make sure this directory exists/is correct and contains the file `Encoder V3.json`
+      make sure this directory exists/is correct and contains the file `Encoder V8.json`
     * `data` options:
       * `decoder-data-path`: _synthetic spectra file path_
       * `encoder-data-path`: _spectra path_
@@ -281,8 +281,8 @@ e_save_num = config['training']['encoder-save']
 states_dir = config['output']['network-states-directory']
 
 # Initialise networks
-d_loaders, decoder = initialization('decoder', config)[2:4]
-*_, e_loaders, encoder, device = initialization(
+d_loaders, decoder = initialization('decoder', config)[2:]
+*_, e_loaders, encoder = initialization(
     'encoder',
     config_path,
     transform=d_loaders[0].dataset.dataset.transform
@@ -293,7 +293,6 @@ training(
     (0, epochs),
     d_loaders,
     decoder,
-    device,
     save_num=d_save_num,
     states_dir=states_dir,
 )
@@ -301,7 +300,6 @@ training(
     (0, epochs),
     e_loaders,
     encoder,
-    device,
     save_num=e_save_num,
     states_dir=states_dir,
     surrogate=decoder,
@@ -309,7 +307,7 @@ training(
 ```
 
 Both networks should now be trained and their states should be saved to `network-states-directory`
-with the file name `Decoder V2_2.pth` & `Encoder V3_2.pth`.
+with the file name `Decoder V8_2.pth` & `Encoder V8_2.pth`.
 
 To generate the spectra parameter predictions, go to section
 [Fitting the Data](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#314-fitting-the-data),
@@ -351,13 +349,17 @@ plot_training('Decoder', config['output']['plots-directory'], *decoder_return)
 
 If you have previously fitted parameters,
 you can compare the performance of the network for each parameter using the functions
-`plot_param_comparison`, and `plot_param_distribution` from the module `fspnet.utils.plots`.
+`plot_param_comparison`, `plot_param_distribution`, and `plot_param_pairs`
+from the module `fspnet.utils.plots`.
 
 `plot_param_comparison` is used to plot parameter predictions
 against fitted parameters for each parameter.
 
 `plot_param_distribution` shows how the parameter predictions are distributed
 compared to the fitted parameters.
+
+`plot_param_pairs` shows the distributions of each parameter along the diagonal
+and the correlations between each parameter for one or two datasets.
 
 To get the predictions, the function `predict_parameters` from `fspnet.spectrum_fit`
 can be used as mentioned in
@@ -369,26 +371,30 @@ In addition to this, several parameters in the `spectrum-fit` config file need c
 * 'model' options:
     * `parameter-names`: _list of names for each parameter_
 
+All plots will be saved to `spectrum-fit`&rarr;`output`&rarr;`plots-directory`.
+
 **Example code**
 
 ```python
 from fspnet.spectrum_fit import predict_parameters
-from fspnet.utils.plots import plot_param_comparison, plot_param_distribution
+from fspnet.utils.plots import plot_param_comparison, plot_param_distribution, plot_param_pairs
 
 plots_dir = config['output']['plots-directory']
 param_names = config['model']['parameter-names']
 
 predict_parameters(config=config)
 
-plot_param_comparison(
-    plots_dir,
-    param_names,
-    config,
-)
+plot_param_comparison(param_names, config)
 plot_param_distribution(
     plots_dir,
     [config['data']['encoder-data-path'], config['output']['parameter-predictions-path']],
     config,
+    labels=('Target', 'Predictions'),
+)
+plot_param_pairs(
+    [config['data']['encoder-data-path'], config['output']['parameter-predictions-path']],
+    config,
+    labels=('Target', 'Predictions'),
 )
 ```
 
@@ -410,45 +416,44 @@ from fspnet.utils.plots import plot_saliency
 from fspnet.utils.analysis import autoencoder_saliency, decoder_saliency
 
 # Initialise networks
-d_loaders, decoder = initialization(...)[2:4]
-*_, e_loaders, encoder, device = initialization(...)
+d_loaders, decoder = initialization(...)[2:]
+*_, e_loaders, encoder = initialization(...)
 
 # Calculate saliencies
-decoder_saliency(d_loaders[1], device, decoder)
-saliency_output = autoencoder_saliency(e_loaders[1], device, encoder, decoder)
+decoder_saliency(d_loaders[1], decoder)
+saliency_output = autoencoder_saliency(e_loaders[1], encoder, decoder)
 plot_saliency('../plots/', *saliency_output)
 ```
 
 ### 4.4 Getting the PGStatistics of the Encoder
 
 To measure the performance of the encoder,
-`pyxspec_test` from `fspnet.utils.training` can be used to generate
-Poisson data, Gaussian noise statistics (PGStats) values for each prediction and return the median value.  
+`pyxspec_test` from `fspnet.utils.training` can be used to generate a reduced Poisson data,
+Gaussian noise statistics (PGStats) values for each prediction and return the median value.  
 `pyxspec_test` uses PyXspec, which is slow, so it tries to leverage multiprocessing;
 therefore, the more CPU cores, the faster this process will be.
 
+The function takes either an array of parameters or the path to the parameters file.
 The function will create a `.csv` file that will have
 the spectrum name/number, predicted parameters and PGStat. 
 The directory location is specified in
-`spectrum-fit`&rarr;`output`&rarr;`worker-directory`  
-The function will also return the median PGStat and predicted parameters.
+`spectrum-fit`&rarr;`output`&rarr;`worker-directory`
 
 **Example code**:
 
 ```python
-from fspnet.spectrum_fit import initialization
 from fspnet.utils.training import pyxspec_test
+from fspnet.spectrum_fit import predict_parameters
 
-# Initialise networks
-*_, e_loaders, encoder, device = initialization(...)
+# Generate parameter predictions
+predict_parameters(config=config)
 
 # Individual results will be saved to '../data/worker/Encoder_output.csv
-median_pgstat, parameters = pyxspec_test(
+pyxspec_test(
     config['output']['worker-directory'],
-    e_loaders[1],
+    config['output']['parameter-predictions-path'],
+    cpus=cpus, 
     job_name='Encoder_output',
-    device=device,
-    encoder=encoder,
 )
 ```
 
@@ -486,53 +491,52 @@ Going from 3D to 2D, `reshape` will use `output = [-1]`
       will be used if provided, else `features` will be used
     * `features`: optional integer, output size, won't be used if `factor` is provided
     * `dropout`: boolean, default = False, probability equals `dropout_prob`
+    * `batch_norm`: boolean, default = False, if batch normalisation should be used
     * `activation`: boolean, default = True, if a SELU activation should be used
-* `convolutional`: Convolution with same padding using replicate,
-  dropout and ELU:
+* `convolutional`: Convolution with padding using replicate and ELU:
     * `filters`: integer, number of convolutional filters
     * `dropout`: boolean, default = True, probability equals `dropout_prob`
-    * `batch_norm`: boolean, default = False, batch normalisation
+    * `batch_norm`: boolean, default = False, if batch normalisation should be used
     * `activation`: boolean, default = True, if an ELU activation should be used
     * `kernel`: integer, default = 3, kernel size
     * `stride`: integer, default = 1, stride of the kernel
     * `padding`: integer or string, default = 'same',
       input padding, can an integer or _same_ where _same_ preserves the input shape
-* `gru`: Gated recurrent unit (GRU) with ELU and dropout if parameter `layers` > 1:
+* `recurrent`: Recurrent layer with ELU and dropout if true and parameter `layers` > 1:
     * `dropout`: boolean, default = True, probability equals `dropout_prob`
+    * `batch_norm`: boolean, default = False, if batch normalisation should be used
     * `activation`: boolean, default = True, if an ELU activation should be used
     * `layers`: integer, default = 2, number of GRU layers
-    * `factor`: float, default = 1, 
-      output size equals `factor` $\times$ _layer input size_
+    * `filters`: integer, default = 1, number of output filters;
+    * `method`: string, default = 'gru', type of recurrent layer, can be _gru_, _lstm_ or _rnn_
     * `bidirectional`: string, default = None,
       if a bidirectional GRU should be used and method for combining the two directions,
       can be _sum_, _mean_ or _concatenation_
-* `linear_upscale`: Scales the layer input by two using a linear layer,
-  **input and output is 3D**, uses SELU
 * `conv_upscale`: Scales the layer input by two using convolution and pixel shuffle,
-  so `filters` **must** be a multiple of two, uses kernel size of 3 and same padding
-    * `filters`: integer, must be a multiple of two as $C_{out} = C_{in} / 2$
-    * `batch_norm`: boolean, default = false, batch normalisation
+  uses stride of 1, same padding and no dropout, uses ELU
+    * `filters`: integer, number of convolutional filters
+    * `batch_norm`: boolean, default = False, if batch normalisation should be used
     * `activation`: boolean, default = true, ELU activation
     * `kernel`: integer, default = 3, kernel size
 * `conv_transpose`: Scales the layer input by two using transpose convolution,
-  uses kernel size of 2 and stride 2, uses ELU and dropout
+  uses kernel size of 2 and stride 2, uses ELU
     * `filters`: integer, number of convolutional filters
     * `dropout`: boolean, default = True, probability equals `dropout_prob`
-    * `batch_norm`: boolean, default = False, batch normalisation
+    * `batch_norm`: boolean, default = False, if batch normalisation should be used
     * `activation`: boolean, default = True, if an ELU activation should be used
 * `upsample`: Linear interpolation scales layer input by two
 * `conv_depth_downscale`: Reduces $C$ to one, uses kernel size of 1, same padding and ELU
-    * `batch_norm`: boolean, default = False, batch normalisation
+    * `batch_norm`: boolean, default = False, if batch normalisation should be used
     * `activation`: boolean, default = True, if an ELU activation should be used
 * `conv_downscale`: Downscales the layer input by two through strided convolution,
-  uses kernel size of 2, padding of 1 using replicate and stride 2, uses ELU and dropout
+  uses kernel size of 2, padding of 1 using replicate and stride 2, uses ELU
     * `filters`: integer, number of convolutional filters
     * `dropout`: boolean, default = True, probability equals `dropout_prob`
-    * `batch_norm`: boolean, default = False, batch normalisation
+    * `batch_norm`: boolean, default = False, if batch normalisation should be used
     * `activation`: boolean, default = True, if an ELU activation should be used
 * `pool`: Downscales the layer input by two using max pooling
 * `reshape`: Reshapes the dimensions
-    * `output`: integer or tuple[integer, integer], dimensions of the output of the layer,
+    * `output`: tuple[integer] or tuple[integer, integer], dimensions of the output of the layer,
       ignoring the first dimension of $N$
 * `sample`: Predicts the mean and standard deviation of a Gaussian distribution
   and randomly samples from it for a variational autoencoder
@@ -547,6 +551,8 @@ Going from 3D to 2D, `reshape` will use `output = [-1]`
     * `layer`: integer, layer index to concatenate the previous layer with
 * `shortcut`: Adds the previous layer with the specified layer
     * `layer`: integer, layer index to add to the previous layer
+* `skip`: Passes the output from `layer` into the next layer
+    * `layer`: integer, layer index to get the output from
 
 ### 5.2 Optimising Hyperparameters using Optuna
 
@@ -576,7 +582,7 @@ Several parameters in the `network-optimizer` config file need configuring:
 from fspnet.network_optimizer import optimize_network
 from fspnet.spectrum_fit import initialization
 
-*_, loaders, _, device = initialization(...)
+loaders = initialization(...)[-2]
 
-optimize_network(config, loaders, device)
+optimize_network(config, loaders)
 ```

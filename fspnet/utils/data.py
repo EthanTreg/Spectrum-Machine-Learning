@@ -223,6 +223,38 @@ def load_data(data_path: str, load_kwargs: dict = None) -> dict | ndarray:
     return data
 
 
+def load_params(data_path: str, load_kwargs: dict = None) -> tuple[ndarray, ndarray]:
+    """
+    Loads parameters and spectra names from file, supports .csv, .pickle and .npy
+
+    Parameters
+    ----------
+    data_path : string
+        Path to the parameters
+    load_kwargs : dictionary, default = None
+        Optional arguments to pass into np.loadtxt for .csv
+
+    Returns
+    -------
+    tuple[ndarray, ndarray]
+        Names and parameters
+    """
+    data = load_data(data_path, load_kwargs=load_kwargs)
+
+    if '.pickle' in data_path:
+        if 'names' in data:
+            names = np.array(data['names'])
+        else:
+            names = np.arange(len(data['params']), dtype=float).astype(str)
+
+        params = np.array(data['params'])
+    elif '.csv' in data_path:
+        names = data[:, 0]
+        params = data[:, 1:].astype(float)
+
+    return names, params
+
+
 def load_x_data(y_size: int) -> ndarray:
     """
     Fetches x data from file and matches the length to the y data
@@ -319,6 +351,7 @@ def delete_data(directory: str = None, files: list[str] = None):
 def data_initialisation(
         spectra_path: str,
         log_params: list,
+        batch_size: int = 120,
         val_frac: float = 0.1,
         transform: tuple[tuple[float, float], tuple[ndarray, ndarray]] = None,
         indices: ndarray = None) -> tuple[DataLoader, DataLoader]:
@@ -331,6 +364,9 @@ def data_initialisation(
         Path to synthetic data
     log_params : list
         Index of each free parameter in logarithmic space
+    batch_size : integer, default = 1024
+        Number of data inputs per weight update,
+        smaller values update the network faster and requires less memory, but is more unstable
     val_frac : float, default = 0.1
         Fraction of validation data
     transform : tuple[tuple[float, float], tuple[ndarray, ndarray]], default = None
@@ -343,7 +379,6 @@ def data_initialisation(
     tuple[DataLoader, DataLoader]
         Dataloaders for the training and validation datasets
     """
-    batch_size = 120
     kwargs = get_device()[0]
 
     # Fetch dataset & create train & val data

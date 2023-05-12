@@ -227,6 +227,7 @@ def worker():
         data['model'],
         data['fix_params'],
         optimize=data['optimize'],
+        iterations=data['iterations'],
         custom_model=data['custom_model'],
         model_dir=data['model_dir'],
     )

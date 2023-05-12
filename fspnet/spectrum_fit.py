@@ -4,6 +4,7 @@ Main spectral machine learning module
 import os
 import pickle
 import logging as log
+from time import time
 
 import torch
 import matplotlib
@@ -12,8 +13,8 @@ from torch.utils.data import DataLoader
 
 from fspnet.utils.data import data_initialisation
 from fspnet.utils.utils import open_config, get_device
-from fspnet.utils.training import training, pyxspec_test
 from fspnet.utils.network import load_network, Network
+from fspnet.utils.training import training, pyxspec_test
 from fspnet.utils.analysis import (
     autoencoder_saliency,
     decoder_saliency,
@@ -29,9 +30,77 @@ from fspnet.utils.plots import (
 )
 
 
-def predict_parameters(
-        config: dict | str = '../config.yaml',
-        encoder: Network = None) -> np.ndarray:
+def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
+    """
+    Tests the PGStats of the different fitting methods using PyXspec
+
+    Parameters
+    ----------
+    config : dictionary
+        Configuration dictionary
+    dataset : Dataset
+        Validation dataset to test the PGStats for
+    """
+    # Initialize variables
+    cpus = config['training']['cpus']
+    default_params = config['model']['default-parameters']
+    log_params = config['model']['log-parameters']
+    predictions_path = config['output']['parameter-predictions-path']
+    worker_dir = config['output']['worker-directory']
+    worker_data = {
+        'optimize': False,
+        'dirs': [
+            os.path.dirname(os.path.abspath(__file__)),
+            config['data']['spectra-directory'],
+        ],
+        'iterations': config['model']['iterations'],
+        'fix_params': config['model']['fixed-parameters'],
+        'model': config['model']['model-name'],
+        'custom_model': config['model']['custom-model-name'],
+        'model_dir': config['model']['model-directory'],
+    }
+    indices = dataset.indices
+    names = dataset.dataset.names[indices]
+    xspec_params = dataset.dataset.params[indices]
+    default_params = np.repeat([default_params], names.size, axis=0)
+
+    # Untransform Xspec parameters
+    xspec_params = xspec_params * dataset.dataset.transform[1][1] + dataset.dataset.transform[1][0]
+
+    if log_params:
+        xspec_params[:, log_params] = 10 ** xspec_params[:, log_params]
+
+    # Save worker variables
+    with open(f'{worker_dir}worker_data.pickle', 'wb') as file:
+        pickle.dump(worker_data, file)
+
+    # Encoder validation performance
+    print('\nTesting Encoder...')
+    pyxspec_test(worker_dir, predictions_path, cpus=cpus, job_name='Encoder_output')
+
+    # Xspec performance
+    print('\nTesting Xspec...')
+    pyxspec_test(worker_dir, (names, xspec_params), cpus=cpus, job_name='Xspec_output')
+
+    # Default performance
+    print('\nTesting Defaults...')
+    pyxspec_test(worker_dir, (names, default_params), cpus=cpus)
+
+    # Allow Xspec optimization
+    worker_data['optimize'] = True
+    with open(f'{worker_dir}worker_data.pickle', 'wb') as file:
+        pickle.dump(worker_data, file)
+
+    # Encoder + Xspec performance
+    print('\nTesting Encoder + Fitting...')
+    pyxspec_test(worker_dir, predictions_path, cpus=cpus, job_name='Encoder_Xspec_output')
+
+    # Default + Xspec performance
+    print('\nTesting Defaults + Fitting...')
+    pyxspec_test(worker_dir, (names, default_params), cpus=cpus, job_name='Default_Xspec_output')
+
+
+def predict_parameters(config: dict | str = '../config.yaml') -> np.ndarray:
     """
     Predicts parameters using the encoder & saves the results to a file
 
@@ -39,9 +108,6 @@ def predict_parameters(
     ----------
     config : dictionary | string, default = '../config.yaml'
         Configuration dictionary or file path to the configuration file
-    encoder : Network, default = None
-        Encoder network for generating parameters,
-        otherwise will load network from the configuration file
 
     Returns
     -------
@@ -51,15 +117,15 @@ def predict_parameters(
     if isinstance(config, str):
         _, config = open_config('spectrum-fit', config)
 
-    returns = initialization(
+    if config['training']['encoder-save']:
+        config['training']['encoder-load'] = config['training']['encoder-save']
+
+    (_, loader), encoder = initialization(
         config['training']['encoder-name'],
         config,
     )[2:]
-    _, loader = returns[0]
 
-    if not encoder:
-        encoder = returns[1]
-
+    initial_time = time()
     output_path = config['output']['parameter-predictions-path']
     names = []
     params = []
@@ -72,17 +138,16 @@ def predict_parameters(
     with torch.no_grad():
         for spectra, *_, names_batch in loader:
             names.extend(names_batch)
-            param_batch = encoder(spectra.to(get_device()[1])).cpu()
-
-            # Transform parameters
-            param_batch = param_batch * param_transform[1] + param_transform[0]
-
-            if log_params:
-                param_batch[:, log_params] = 10 ** param_batch[:, log_params]
-
+            param_batch = encoder(spectra.to(get_device()[1]))
             params.append(param_batch)
 
-    output = np.hstack((np.expand_dims(names, axis=1), torch.cat(params).numpy()))
+    params = torch.cat(params).cpu().numpy() * param_transform[1] + param_transform[0]
+
+    if log_params:
+        params[:, log_params] = 10 ** params[:, log_params]
+
+    output = np.hstack((np.expand_dims(names, axis=1), params))
+    print(f'Parameter prediction time: {time() - initial_time:.3e} s')
     np.savetxt(output_path, output, delimiter=',', fmt='%s')
 
     return output
@@ -132,12 +197,13 @@ def initialization(
 
     # Load config parameters
     load_num = config['training'][f'{network_type}-load']
-    num_params = config['model']['parameters-number']
+    batch_size = config['training']['batch-size']
     learning_rate = config['training']['learning-rate']
     networks_dir = config['training']['network-configs-directory']
     spectra_path = config['data'][f'{network_type}-data-path']
-    states_dir = config['output']['network-states-directory']
+    num_params = config['model']['parameters-number']
     log_params = config['model']['log-parameters']
+    states_dir = config['output']['network-states-directory']
 
     if load_num:
         try:
@@ -156,6 +222,7 @@ def initialization(
     loaders = data_initialisation(
         spectra_path,
         log_params,
+        batch_size=batch_size,
         transform=transform,
         indices=indices,
     )
@@ -190,26 +257,13 @@ def main(config_path: str = '../config.yaml'):
     # Training variables
     tests = config['training']['tests']
     num_epochs = config['training']['epochs']
-    cpus = config['training']['cpus']
 
     # Data paths
     e_data_path = config['data']['encoder-data-path']
     d_data_path = config['data']['decoder-data-path']
 
     # Model parameters
-    default_params = config['model']['default-parameters']
     param_names = config['model']['parameter-names']
-    worker_data = {
-        'optimize': False,
-        'dirs': [
-            os.path.dirname(os.path.abspath(__file__)),
-            config['data']['spectra-directory'],
-        ],
-        'fix_params': config['model']['fixed-parameters'],
-        'model': config['model']['model-name'],
-        'custom_model': config['model']['custom-model-name'],
-        'model_dir': config['model']['model-directory'],
-    }
 
     # Output paths
     predictions_path = config['output']['parameter-predictions-path']
@@ -242,10 +296,6 @@ def main(config_path: str = '../config.yaml'):
     if not os.path.exists(states_dir):
         os.makedirs(states_dir)
 
-    # Save worker variables
-    with open(f'{worker_dir}worker_data.pickle', 'wb') as file:
-        pickle.dump(worker_data, file)
-
     # Initialize data & decoder
     d_initial_epoch, d_losses, d_loaders, decoder = initialization(
         config['training']['decoder-name'],
@@ -268,7 +318,6 @@ def main(config_path: str = '../config.yaml'):
         states_dir=states_dir,
         losses=d_losses,
     )
-
     plot_training('Decoder', plots_dir, *decoder_return)
 
     # Train encoder
@@ -281,87 +330,35 @@ def main(config_path: str = '../config.yaml'):
         losses=e_losses,
         surrogate=decoder,
     )
-
     plot_training('Autoencoder', plots_dir, *encoder_return)
 
     # Plot linear weight mappings
     plot_linear_weights(config, linear_weights(decoder))
 
     # Generate parameter predictions
-    predict_parameters(config=config, encoder=encoder)
-    plot_param_comparison(
-        plots_dir,
-        param_names,
-        config,
-    )
+    predict_parameters(config=config)
+    plot_param_comparison(param_names, config)
     plot_param_distribution(
         'Decoder_Param_Distribution',
         [d_data_path, predictions_path],
-        ['Target', 'Prediction'],
         config,
+        ['Target', 'Prediction'],
     )
     plot_param_distribution(
         'Encoder_Param_Distribution',
         [e_data_path, predictions_path],
-        ['Target', 'Prediction'],
         config,
+        ['Target', 'Prediction'],
     )
-    plot_param_pairs([e_data_path, predictions_path], ['Targets', 'Predictions'], config)
+    plot_param_pairs((e_data_path, predictions_path), config, labels=('Targets', 'Predictions'))
 
     # Calculate saliencies
     decoder_saliency(d_loaders[1], decoder)
     saliency_output = autoencoder_saliency(e_loaders[1], encoder, decoder)
     plot_saliency(plots_dir, *saliency_output)
 
-    if not tests:
-        return
-
-    # Encoder validation performance
-    print('\nTesting Encoder...')
-    pyxspec_test(
-        worker_dir,
-        e_loaders[1],
-        cpus=cpus,
-        job_name='Encoder_output',
-        encoder=encoder,
-    )
-
-    # Xspec performance
-    print('\nTesting Xspec...')
-    pyxspec_test(worker_dir, e_loaders[1], cpus=cpus, job_name='Xspec_output')
-
-    # Default performance
-    print('\nTesting Defaults...')
-    pyxspec_test(
-        worker_dir,
-        e_loaders[1],
-        cpus=cpus,
-        defaults=torch.tensor(default_params)
-    )
-
-    # Allow Xspec optimization
-    worker_data['optimize'] = True
-    with open(f'{worker_dir}worker_data.pickle', 'wb') as file:
-        pickle.dump(worker_data, file)
-
-    # Encoder + Xspec performance
-    print('\nTesting Encoder + Fitting...')
-    pyxspec_test(
-        worker_dir,
-        e_loaders[1],
-        cpus=cpus,
-        job_name='Encoder_Xspec_output',
-        encoder=encoder,
-    )
-
-    # Default + Xspec performance
-    print('\nTesting Defaults + Fitting...')
-    pyxspec_test(
-        worker_dir,
-        e_loaders[1],
-        cpus=cpus,
-        defaults=torch.tensor(default_params)
-    )
+    if tests:
+        pyxspec_tests(config, e_loaders[1].dataset)
 
 
 if __name__ == '__main__':

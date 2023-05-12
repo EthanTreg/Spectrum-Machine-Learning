@@ -8,8 +8,8 @@ import numpy as np
 from numpy import ndarray
 from torch.utils.data import DataLoader
 
-from fspnet.utils.data import load_data
 from fspnet.utils.network import Network
+from fspnet.utils.data import load_params
 from fspnet.utils.utils import get_device
 
 
@@ -95,8 +95,8 @@ def decoder_saliency(loader: DataLoader, decoder: Network):
     params_std = torch.std(saliency, dim=0) / torch.min(saliency_params)
 
     print(
-        f'\nParameter impact on decoder:\n{params_impact.tolist()}'
-        f'\nSaliency spread:\n{params_std.tolist()}\n'
+        f"\nParameter impact on decoder:\n{[f'{x:.2f}' for x in params_impact]}"
+        f"\nSaliency spread:\n{[f'{x:.2f}' for x in params_std]}\n"
     )
 
 
@@ -114,25 +114,14 @@ def param_comparison(data_paths: tuple[str, str]) -> tuple[ndarray, ndarray]:
     tuple[ndarray, ndarray]
         Target parameters and parameter predictions
     """
-    params = []
     names = []
+    params = []
 
     # Load config parameters
     for data_path in data_paths:
-        data = load_data(data_path, load_kwargs={'dtype': str})
-
-        if '.pickle' in data_path:
-            if 'names' in data:
-                names.append(np.array(data['names']))
-            else:
-                names.append(np.arange(len(data['params']), dtype=float).astype(str))
-
-            data = np.array(data['params'])
-        elif '.csv' in data_path:
-            names.append(data[:, 0])
-            data = data[:, 1:].astype(float)
-
-        params.append(data)
+        returns = load_params(data_path, load_kwargs={'dtype': str})
+        names.append(returns[0])
+        params.append(returns[1])
 
     # Sort for longest dataset first
     sort_idx = np.argsort([param.shape[0] for param in params])[::-1]
@@ -140,9 +129,9 @@ def param_comparison(data_paths: tuple[str, str]) -> tuple[ndarray, ndarray]:
     names = [names[i] for i in sort_idx]
 
     # Sort target spectra by name
-    sort_idx = np.argsort(names[0])
-    names[0] = names[0][sort_idx]
-    params[0] = params[0][sort_idx]
+    name_sort_idx = np.argsort(names[0])
+    names[0] = names[0][name_sort_idx]
+    params[0] = params[0][name_sort_idx]
 
     # Filter target parameters using spectra that was predicted and log parameters
     target_idx = np.searchsorted(names[0], names[1])
@@ -151,13 +140,14 @@ def param_comparison(data_paths: tuple[str, str]) -> tuple[ndarray, ndarray]:
     params[0] = params[0][shuffle_idx]
     params[1] = params[1][shuffle_idx]
 
-    return np.swapaxes(params[0][:1000], 0, 1), np.swapaxes(params[1][:1000], 0, 1)
+    params = [params[i] for i in sort_idx]
+
+    return np.swapaxes(params[0], 0, 1), np.swapaxes(params[1], 0, 1)
 
 
 def linear_weights(network: Network) -> ndarray:
     """
-    Returns the mapping of the weights from the lowest dimension
-    to a high dimension for the 3 smallest linear layers
+    Returns the mapping of all linear weights from the input to the output
 
 
     If the low dimension is 5 and the high dimension is 240,
@@ -181,20 +171,19 @@ def linear_weights(network: Network) -> ndarray:
 
     # Get all linear weights in the network
     for name, param in network.named_parameters():
-        if re.search(r'.*linear_\d.weight', name):
-            weights.append(param)
+        if re.search(r'.*linear_\d+.weight', name):
+            weights.append(param.detach().cpu().numpy())
 
-    weights_idx = np.argsort([weight.numel() for weight in weights])
-    weights = [weights[idx].detach().cpu().numpy() for idx in weights_idx]
+    # Calculate weight mapping for each input parameter
+    for param_weight in np.swapaxes(weights[0], 0, 1):
+        # Loop through each layer except the first and multiple weight mapping between layers
+        for i, layer_weights in enumerate(weights[1:]):
+            # If second layer, multiply by input weight, otherwise multiple all weight mappings
+            if i == 0:
+                weight = np.sum(param_weight * layer_weights, axis=1)
+            else:
+                weight = np.sum(weight * layer_weights, axis=1)
 
-    for weights_1l in np.swapaxes(weights[0], 1, 0):
-        weights_i = []
-        weights_1l = np.repeat(weights_1l[np.newaxis], weights[1].shape[0], axis=0)
-
-        for weights_3i in weights[2]:
-            weights_3i = np.repeat(weights_3i[:, np.newaxis], weights[1].shape[1], axis=1)
-            weights_i.append(np.sum(weights_1l * weights_3i * weights[1]))
-
-        param_weights.append(weights_i)
+        param_weights.append(weight)
 
     return np.array(param_weights)

@@ -10,14 +10,14 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from fspnet.utils.utils import subplot_grid
 from fspnet.utils.analysis import param_comparison
-from fspnet.utils.data import load_data, load_x_data, data_normalization
+from fspnet.utils.data import load_params, load_x_data
 
 MAJOR = 24
 MINOR = 20
 FIG_SIZE = (16, 9)
 
 
-def _legend(labels: ndarray, columns: int = 2):
+def _legend(labels: ndarray, columns: int = 2) -> matplotlib.legend.Legend:
     """
     Plots a legend across the top of the plot
 
@@ -27,6 +27,11 @@ def _legend(labels: ndarray, columns: int = 2):
         Legend matplotlib handels and labels as an array to be unpacked into handels and labels
     columns : integer, default = 2
         Number of columns for the legend
+
+    Returns
+    -------
+    Legend
+        Legend object
     """
     legend = plt.figlegend(
         *labels,
@@ -34,13 +39,14 @@ def _legend(labels: ndarray, columns: int = 2):
         ncol=columns,
         bbox_to_anchor=(0.5, 0.91),
         fontsize=MAJOR,
-        columnspacing=10,
     )
     legend.get_frame().set_alpha(None)
 
     for handle in legend.legendHandles:
         if isinstance(handle, matplotlib.collections.PathCollection):
             handle.set_sizes([100])
+
+    return legend
 
 
 def _initialize_plot(
@@ -193,18 +199,20 @@ def _plot_reconstruction(
     axis.hlines(0, xmin=np.min(x_data), xmax=np.max(x_data), color='k')
 
     divider = make_axes_locatable(axis)
-    axis_2 = divider.append_axes('top', size='150%', pad=0)
+    major_axis = divider.append_axes('top', size='150%', pad=0)
 
-    axis_2.scatter(x_data, y_data, label='Spectrum')
-    axis_2.scatter(x_data, y_recon, label='Reconstruction')
-    axis_2.locator_params(axis='y', nbins=3)
-    axis_2.tick_params(axis='y', labelsize=MINOR)
-    axis_2.set_xticks([])
+    major_axis.scatter(x_data, y_data, label='Spectrum')
+    major_axis.scatter(x_data, y_recon, label='Reconstruction')
+    major_axis.locator_params(axis='y', nbins=3)
+    major_axis.tick_params(axis='y', labelsize=MINOR)
+    major_axis.set_xticks([])
 
-    return axis_2
+    return major_axis
 
 
-def _plot_reconstructions(spectra: ndarray, outputs: ndarray):
+def _plot_reconstructions(
+        spectra: ndarray,
+        outputs: ndarray) -> tuple[list[plt.Axes], list[plt.Axes], matplotlib.legend.Legend]:
     """
     Plots reconstructions and residuals for 4 spectra
 
@@ -214,7 +222,13 @@ def _plot_reconstructions(spectra: ndarray, outputs: ndarray):
         True spectra
     outputs : ndarray
         Predicted spectra
+
+    Returns
+    -------
+    tuple[list[Axes], list[Axes], Legend]
+        Major axes, minor axes and legend
     """
+    major_axes = []
     x_data = load_x_data(spectra.shape[-1])
 
     # Initialize reconstructions plots
@@ -229,10 +243,15 @@ def _plot_reconstructions(spectra: ndarray, outputs: ndarray):
 
     # Plot reconstructions
     for spectrum, output, axis in zip(spectra, outputs, axes):
-        main_axis = _plot_reconstruction(x_data, spectrum, output, axis)
+        major_axes.append(_plot_reconstruction(x_data, spectrum, output, axis))
 
-    labels = np.hstack((main_axis.get_legend_handles_labels(), axes[0].get_legend_handles_labels()))
-    _legend(labels, columns=3)
+    labels = np.hstack((
+        major_axes[0].get_legend_handles_labels(),
+        axis.get_legend_handles_labels()),
+    )
+    legend = _legend(labels, columns=3)
+
+    return major_axes, axes, legend
 
 
 def _plot_histogram(
@@ -311,76 +330,65 @@ def plot_saliency(plots_dir: str, spectra: ndarray, predictions: ndarray, salien
         Saliency
     """
     # Constants
-    cmap = plt.cm.hot
+    bins = 8
     x_data = load_x_data(spectra.shape[1])
 
-    x_regions = x_data[::12]
-    saliencies = np.mean(saliencies.reshape(saliencies.shape[0], -1, 12), axis=-1)
-    saliencies = data_normalization(saliencies, mean=False, axis=1)[0] * 0.9 + 0.05
+    x_regions = x_data[::bins]
+    saliencies = np.mean(saliencies.reshape(saliencies.shape[0], -1, bins), axis=-1)
 
     # Initialize saliency plots
-    axes = _initialize_plot(
-        (2, 2),
-        legend=True,
-        x_label='Energy (keV)',
-        gridspec_kw={'left': 0.01, 'bottom': 0.05, 'hspace': 0, 'wspace': 0},
-        plot_kwargs={'sharex': 'col'},
-    ).flatten()
+    major_axes, minor_axes, legend = _plot_reconstructions(spectra, predictions)
+    legend.remove()
 
-    # Plot each saliency map
-    for i, (
-            axis,
-            spectrum,
-            prediction,
-            saliency
-    ) in enumerate(zip(axes, spectra, predictions, saliencies)):
-        for j, (x_region, saliency_region) in enumerate(zip(x_regions[:-1], saliency[:-1])):
-            axis.axvspan(x_region, x_regions[j + 1], color=cmap(saliency_region))
+    for axis, saliency in zip(major_axes, saliencies):
+        twin_axis = axis.twinx()
+        twin_axis.step(x_regions, saliency, color='green', label='Saliency')
+        twin_axis.tick_params(right=False, labelright=False)
 
-        axis.axvspan(x_regions[-1], x_data[-1], color=cmap(saliency[-1]))
-
-        axis.scatter(x_data, spectrum, label='Target')
-        axis.scatter(x_data, prediction, color='g', label='Prediction')
-        axis.text(0.96, 0.9, i + 1, fontsize=MAJOR, transform=axis.transAxes)
-        axis.tick_params(left=False, labelleft=False, labelbottom=False, bottom=False)
-
-    _legend(axes[0].get_legend_handles_labels())
+    labels = np.hstack((
+        axis.get_legend_handles_labels(),
+        twin_axis.get_legend_handles_labels(),
+        minor_axes[0].get_legend_handles_labels()),
+    )
+    _legend(labels, columns=4)
     plt.savefig(f'{plots_dir}Saliency_Plot.png', transparent=False)
 
 
-def plot_param_pairs(data_paths: list[str], labels: list[str], config: dict):
+def plot_param_pairs(
+        data_paths: tuple[str] | tuple[str, str],
+        config: dict,
+        labels: tuple[str, str] = None):
     """
     Plots a pair plot to compare the distributions and comparisons between parameters
 
     Parameters
     ----------
-    data_paths : list[string]
+    data_paths : tuple[string] | tuple[string, string]
         Paths to the parameters to compare, can have length 1 or 2
-    labels : list[string]
-        Labels for the data of the same length as data_paths
     config : dictionary
         Configuration dictionary
+    labels : tuple[string, string], default = None
+        Labels for the legend if provided
     """
     log_params = config['model']['log-parameters']
     param_names = config['model']['parameter-names']
     plots_dir = config['output']['plots-directory']
 
+    if not labels:
+        labels = [None]
+
     # Load data & shuffle
     if len(data_paths) == 2:
         params = param_comparison(data_paths)
     else:
-        params = load_data(data_paths[0], load_kwargs={'usecols': range(1, 6)})
-
-        if '.pickle' in data_paths[0]:
-            params = np.array(params['params'])
-
+        params = load_params(data_paths[0], load_kwargs={'usecols': range(1, 6)})[1]
         np.random.shuffle(params)
         params = [np.swapaxes(params, 0, 1)]
 
     # Initialize pair plots
     axes = _initialize_plot(
         (params[0].shape[0],) * 2,
-        legend=True,
+        legend=labels[0],
         x_label=' ',
         y_label=' ',
         plot_kwargs={'sharex': 'col'},
@@ -391,6 +399,11 @@ def plot_param_pairs(data_paths: list[str], labels: list[str], config: dict):
     for i, (axes_col, *y_param) in enumerate(zip(axes, *params)):
         for j, (axis, *x_param) in enumerate(zip(axes_col, *params)):
             log = False
+
+            if len(x_param) > 1:
+                data_twin = x_param[1]
+            else:
+                data_twin = None
 
             # Share y-axis for all scatter plots
             if i != j and i == 0:
@@ -425,9 +438,8 @@ def plot_param_pairs(data_paths: list[str], labels: list[str], config: dict):
 
             # Plot scatter plots & histograms
             if i == j:
-                twin_axis = _plot_histogram(x_param[0], axis, log=log, data_twin=x_param[1])
+                twin_axis = _plot_histogram(x_param[0], axis, log=log, data_twin=data_twin)
                 axis.tick_params(labelleft=False, left=False)
-                twin_axis.tick_params(labelright=False, right=False)
             elif j < i:
                 axis.scatter(
                     x_param[0][:1000],
@@ -438,6 +450,9 @@ def plot_param_pairs(data_paths: list[str], labels: list[str], config: dict):
                 )
             else:
                 axis.remove()
+
+            if twin_axis:
+                twin_axis.tick_params(labelright=False, right=False)
 
             if j < i and len(x_param) > 1:
                 axis.scatter(
@@ -454,30 +469,29 @@ def plot_param_pairs(data_paths: list[str], labels: list[str], config: dict):
                 axis.set_xlabel(param_names[j], fontsize=MINOR)
 
             # Left column parameter names
-            if j == 0:
+            if j == 0 and i != 0:
                 axis.set_ylabel(param_names[i], fontsize=MINOR)
 
-    _legend(axes[-1, 0].get_legend_handles_labels())
+    if labels[0]:
+        _legend(axes[-1, 0].get_legend_handles_labels())
+
     plt.savefig(f'{plots_dir}Parameter_Pairs.png')
 
 
-def plot_param_comparison(
-        plots_dir: str,
-        param_names: list[str],
-        config: dict):
+def plot_param_comparison(param_names: list[str], config: dict):
     """
     Plots prediction against target for each parameter
 
     Parameters:
     ----------
-    plots_dir : string
-        Directory to save plots
     param_names : list[string]
         List of parameter names
     config: dictionary
         Configuration dictionary
     """
     log_params = config['model']['log-parameters']
+    plots_dir = config['output']['plots-directory']
+
     target, prediction = param_comparison((
         config['data']['encoder-data-path'],
         config['output']['parameter-predictions-path'],
@@ -493,8 +507,8 @@ def plot_param_comparison(
     for i, (name, axis, target_param, predicted_param) in enumerate(zip(
         param_names,
         axes.values(),
-        target,
-        prediction)):
+        target[:, :1000],
+        prediction[:, :1000])):
         value_range = [
             min(np.min(target_param), np.min(predicted_param)),
             max(np.max(target_param), np.max(predicted_param))
@@ -511,7 +525,11 @@ def plot_param_comparison(
     plt.savefig(f'{plots_dir}Parameter_Comparison.png', transparent=False)
 
 
-def plot_param_distribution(name: str, data_paths: list[str], labels: list[str], config: dict):
+def plot_param_distribution(
+        name: str,
+        data_paths: list[str],
+        config: dict,
+        labels: list[str] = None):
     """
     Plots histogram of each parameter for both true and predicted
 
@@ -521,10 +539,10 @@ def plot_param_distribution(name: str, data_paths: list[str], labels: list[str],
         Name to save the plot
     data_paths : list[string]
         Paths to the parameters to plot
-    labels : list[string]
-        Legend labels for each data path
     config : dictionary
         Configuration dictionary
+    labels : list[string], default = None
+        Legend labels for each data path
     """
     params = []
     log_params = config['model']['log-parameters']
@@ -538,28 +556,38 @@ def plot_param_distribution(name: str, data_paths: list[str], labels: list[str],
     )
 
     for data_path in data_paths:
-        data = load_data(data_path, load_kwargs={'usecols': range(1, 6)})
-
-        if '.pickle' in data_path:
-            data = data['params']
-
-        params.append(np.swapaxes(data, 0, 1))
+        params.append(np.swapaxes(load_params(
+            data_path,
+            load_kwargs={'usecols': range(1, 6)},
+        )[1], 0, 1))
 
     # Plot subplots
     for i, (title, *param, axis) in enumerate(zip(param_names, *params, axes.values())):
         log = False
 
+        if len(param) > 1:
+            data_twin = param[1]
+        else:
+            data_twin = None
+
         if i in log_params:
             axis.set_xscale('log')
             log = True
 
-        twin_axis = _plot_histogram(param[0], axis, log=log, labels=labels, data_twin=param[1])
+        twin_axis = _plot_histogram(param[0], axis, log=log, labels=labels, data_twin=data_twin)
         axis.set_xlabel(title, fontsize=MAJOR)
 
-    _legend(np.hstack((
-        axes[0].get_legend_handles_labels(),
-        twin_axis.get_legend_handles_labels(),
-    )))
+    if twin_axis:
+        labels = np.hstack((
+            axes[0].get_legend_handles_labels(),
+            twin_axis.get_legend_handles_labels(),
+        ))
+    elif labels:
+        labels = axes[0].get_legend_handles_labels()
+
+    if labels:
+        _legend(labels)
+
     plt.savefig(plots_dir + name)
 
 

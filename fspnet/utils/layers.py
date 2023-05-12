@@ -240,7 +240,7 @@ def linear(kwargs: dict, layer: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -259,6 +259,8 @@ def linear(kwargs: dict, layer: dict) -> dict:
             if output_size from kwargs and factor is provided, features will not be used;
         dropout : boolean, default = False
             If dropout should be used;
+        batch_norm : boolean, default = 0
+            If batch normalisation should be used;
         activation : boolean, default = True
             If SELU activation should be used;
 
@@ -296,7 +298,7 @@ def convolutional(kwargs: dict, layer: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -367,17 +369,18 @@ def convolutional(kwargs: dict, layer: dict) -> dict:
 
 def recurrent(kwargs: dict, layer: dict) -> dict:
     """
-    Gated recurrent unit (GRU) layer constructor
+    Recurrent layer constructor for either RNN, GRU or LSTM
 
     Parameters
     ----------
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
-            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+            Dimensions in each layer, either linear output features or
+            convolutional/recurrent filters;
         module : Sequential
             Sequential module to contain the layer;
         dropout_prob : float, optional
@@ -385,15 +388,19 @@ def recurrent(kwargs: dict, layer: dict) -> dict:
     layer : dictionary
         dropout : boolean, default = True
             If dropout should be used;
+        batch_norm : boolean, default = 0
+            If batch normalisation should be used;
         activation : boolean, default = True
             If ELU activation should be used;
         layers : integer, default = 2
             Number of stacked GRU layers;
-        factor : float, default = 1
-            Output size of the layer depending on the network's output size;
+        filters : integer, default = 1
+            Number of output filters;
+        method : string, default = gru
+            Type of recurrent layer, can be gru, lstm or rnn;
         bidirectional : string, default = None
-            If a bidirectional GRU should be used and method for combining the two directions,
-            can be sum, mean or concatenation;
+            If a bidirectional recurrence should be used and
+            method for combining the two directions, can be sum, mean or concatenation;
 
     Returns
     -------
@@ -450,51 +457,10 @@ def recurrent(kwargs: dict, layer: dict) -> dict:
         RecurrentOutput(recurrent_layer, bidirectional=bidirectional)
     )
 
-    _optional_layer(True, 'activation', kwargs, layer, nn.ELU())
     _optional_layer(False, 'batch_norm', kwargs, layer, nn.BatchNorm1d(kwargs['dims'][-1]))
+    _optional_layer(True, 'activation', kwargs, layer, nn.ELU())
 
     kwargs['data_size'].append(kwargs['data_size'][-1])
-
-    return kwargs
-
-
-def linear_upscale(kwargs: dict, _: dict) -> dict:
-    """
-    Constructs a 2x upscaler using a linear layer,
-    combines reshape for use within convolutional layers
-
-    Parameters
-    ----------
-    kwargs : dictionary
-        i : integer
-            Layer number;
-        data_size : integer
-            Hidden layer output length;
-        dims : list[integer]
-            Dimensions in each layer, either linear output features or convolutional/GRU filters;
-        module : Sequential
-            Sequential module to contain the layer;
-    _ : dictionary
-        For compatibility
-
-    Returns
-    -------
-    dictionary
-        Returns the input kwargs with any changes made by the function
-    """
-    linear_layer = nn.Linear(
-        in_features=kwargs['data_size'][-1],
-        out_features=kwargs['data_size'][-1] * 2,
-    )
-
-    kwargs['module'].add_module(f"reshape_{kwargs['i']}", Reshape([-1]))
-    kwargs['module'].add_module(f"linear_{kwargs['i']}", linear_layer)
-    kwargs['module'].add_module(f"SELU_{kwargs['i']}", nn.SELU())
-    kwargs['module'].add_module(f"reshape_{kwargs['i']}", Reshape([1, -1]))
-
-    # Data size doubles
-    kwargs['data_size'].append(kwargs['data_size'][-1] * 2)
-    kwargs['dims'].append(1)
 
     return kwargs
 
@@ -508,7 +474,7 @@ def conv_upscale(kwargs: dict, layer: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer], optional
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -516,7 +482,7 @@ def conv_upscale(kwargs: dict, layer: dict) -> dict:
             Sequential module to contain the layer;
     layer : dictionary
         filters : integer
-            Number of convolutional filters, must be a multiple of 2;
+            Number of output convolutional filters;
         batch_norm : boolean, default = False
             If batch normalisation should be used;
         activation : boolean, default = True
@@ -532,6 +498,7 @@ def conv_upscale(kwargs: dict, layer: dict) -> dict:
     layer['dropout'] = False
     layer['stride'] = 1
     layer['padding'] = 'same'
+    layer['filters'] *= 2
     kwargs = convolutional(kwargs, layer)
 
     # Upscaling done using pixel shuffling
@@ -553,7 +520,7 @@ def conv_transpose(kwargs: dict, layer: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -607,7 +574,7 @@ def upsample(kwargs: dict, _: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -659,6 +626,7 @@ def conv_depth_downscale(kwargs: dict, layer: dict) -> dict:
     layer['dropout'] = False
     layer['filters'] = 1
     layer['kernel'] = 1
+    layer['stride'] = 1
     layer['padding'] = 'same'
 
     convolutional(kwargs, layer)
@@ -675,7 +643,7 @@ def conv_downscale(kwargs: dict, layer: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -716,7 +684,7 @@ def pool(kwargs: dict, _: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -749,7 +717,7 @@ def reshape(kwargs: dict, layer: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -794,7 +762,7 @@ def sample(kwargs: dict, layer: dict) -> dict:
     kwargs : dictionary
         i : integer
             Layer number;
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -836,7 +804,7 @@ def extract(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
-        data_size : integer
+        data_size : list[integer]
             Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
@@ -861,6 +829,8 @@ def clone(kwargs: dict, _: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
+        data_size : list[integer]
+            Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
     _ : dictionary
@@ -883,6 +853,8 @@ def concatenate(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
+        data_size : list[integer]
+            Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
     layer : dictionary
@@ -906,6 +878,8 @@ def shortcut(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
+        data_size : list[integer]
+            Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
     layer : dictionary
@@ -933,6 +907,8 @@ def skip(kwargs: dict, layer: dict) -> dict:
     Parameters
     ----------
     kwargs : dictionary
+        data_size : list[integer]
+            Hidden layer output length;
         dims : list[integer]
             Dimensions in each layer, either linear output features or convolutional/GRU filters;
     layer : dictionary
