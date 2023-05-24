@@ -136,7 +136,7 @@ def predict_parameters(config: dict | str = '../config.yaml') -> np.ndarray:
 
     # Initialize processes for multiprocessing of encoder loss calculation
     with torch.no_grad():
-        for spectra, *_, names_batch in loader:
+        for names_batch, spectra, *_ in loader:
             names.extend(names_batch)
             param_batch = encoder(spectra.to(get_device()[1]))
             params.append(param_batch)
@@ -229,7 +229,7 @@ def initialization(
 
     # Initialize network
     network = Network(
-        loaders[0].dataset[0][0].size(0),
+        loaders[0].dataset[0][1].size(0),
         num_params,
         learning_rate,
         name,
@@ -342,13 +342,14 @@ def main(config_path: str = '../config.yaml'):
         'Decoder_Param_Distribution',
         [d_data_path, predictions_path],
         config,
-        ['Target', 'Prediction'],
+        labels=['Target', 'Prediction'],
     )
     plot_param_distribution(
         'Encoder_Param_Distribution',
         [e_data_path, predictions_path],
         config,
-        ['Target', 'Prediction'],
+        y_axis=False,
+        labels=['Target', 'Prediction'],
     )
     plot_param_pairs((e_data_path, predictions_path), config, labels=('Targets', 'Predictions'))
 

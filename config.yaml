@@ -7,7 +7,7 @@ global-variables:
     - &decoder_name 'Decoder V8'
 #    - &decoder_name 'test_decoder_fnn_v3'
     # File name for encoder model to load
-    - &encoder_name 'Encoder V8'
+    - &encoder_name 'Encoder V7'
 #    - &encoder_name 'test_encoder_cnn_v1'
     # Path to the configuration files for the encoder and decoder
     - &network_configs_directory '../network_configs/'
@@ -55,9 +55,9 @@ spectrum-fit:
     # File number to save decoder progress
     decoder-save: 0
     # File number to save encoder progress
-    encoder-save: 2
+    encoder-save: 0
     # File number to load decoder state
-    decoder-load: 4
+    decoder-load: 0
     # File number to load encoder state
     encoder-load: 0
     # Number of epochs to train for
@@ -81,7 +81,7 @@ spectrum-fit:
     # can also contain parameters (params) for supervised learning and/or PyXspec validation,
     # and file names (names) if specific files in the directory should be used
     # if parameters are provided and PyXspec validation is used
-    decoder-data-path: *clean_synthetic_data_path
+    decoder-data-path: *spectra_data_path
     # Path to the spectra for encoder training, same format as for decoder
     encoder-data-path: *spectra_data_path
     # Path to the directory of spectra fits files, only required if parameters exists,
@@ -90,7 +90,7 @@ spectrum-fit:
   # Model for the network to learn
   model:
     # Number of iterations for traditional PyXspec fitting
-    iterations: 10
+    iterations: 60
     # Number of free parameters
     parameters-number: *parameters_number
     # Xspec model to use

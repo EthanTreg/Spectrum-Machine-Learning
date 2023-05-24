@@ -490,50 +490,50 @@ Going from 3D to 2D, `reshape` will use `output = [-1]`
     * `factor`: optional float, _output size_ = `factor` $\times$ _network output size_,
       will be used if provided, else `features` will be used
     * `features`: optional integer, output size, won't be used if `factor` is provided
-    * `dropout`: boolean, default = False, probability equals `dropout_prob`
-    * `batch_norm`: boolean, default = False, if batch normalisation should be used
-    * `activation`: boolean, default = True, if a SELU activation should be used
+    * `dropout`: boolean = False, probability equals `dropout_prob`
+    * `batch_norm`: boolean = False, if batch normalisation should be used
+    * `activation`: boolean = True, if a SELU activation should be used
 * `convolutional`: Convolution with padding using replicate and ELU:
     * `filters`: integer, number of convolutional filters
-    * `dropout`: boolean, default = True, probability equals `dropout_prob`
-    * `batch_norm`: boolean, default = False, if batch normalisation should be used
-    * `activation`: boolean, default = True, if an ELU activation should be used
-    * `kernel`: integer, default = 3, kernel size
-    * `stride`: integer, default = 1, stride of the kernel
-    * `padding`: integer or string, default = 'same',
+    * `dropout`: boolean = True, probability equals `dropout_prob`
+    * `batch_norm`: boolean = False, if batch normalisation should be used
+    * `activation`: boolean = True, if an ELU activation should be used
+    * `kernel`: integer = 3, kernel size
+    * `stride`: integer = 1, stride of the kernel
+    * `padding`: integer or string = 'same',
       input padding, can an integer or _same_ where _same_ preserves the input shape
 * `recurrent`: Recurrent layer with ELU and dropout if true and parameter `layers` > 1:
-    * `dropout`: boolean, default = True, probability equals `dropout_prob`
-    * `batch_norm`: boolean, default = False, if batch normalisation should be used
-    * `activation`: boolean, default = True, if an ELU activation should be used
-    * `layers`: integer, default = 2, number of GRU layers
-    * `filters`: integer, default = 1, number of output filters;
-    * `method`: string, default = 'gru', type of recurrent layer, can be _gru_, _lstm_ or _rnn_
-    * `bidirectional`: string, default = None,
+    * `dropout`: boolean = True, probability equals `dropout_prob`
+    * `batch_norm`: boolean = False, if batch normalisation should be used
+    * `activation`: boolean = True, if an ELU activation should be used
+    * `layers`: integer = 2, number of GRU layers
+    * `filters`: integer = 1, number of output filters;
+    * `method`: string = 'gru', type of recurrent layer, can be _gru_, _lstm_ or _rnn_
+    * `bidirectional`: string = None,
       if a bidirectional GRU should be used and method for combining the two directions,
       can be _sum_, _mean_ or _concatenation_
 * `conv_upscale`: Scales the layer input by two using convolution and pixel shuffle,
   uses stride of 1, same padding and no dropout, uses ELU
     * `filters`: integer, number of convolutional filters
-    * `batch_norm`: boolean, default = False, if batch normalisation should be used
-    * `activation`: boolean, default = true, ELU activation
-    * `kernel`: integer, default = 3, kernel size
+    * `batch_norm`: boolean = False, if batch normalisation should be used
+    * `activation`: boolean = true, ELU activation
+    * `kernel`: integer = 3, kernel size
 * `conv_transpose`: Scales the layer input by two using transpose convolution,
   uses kernel size of 2 and stride 2, uses ELU
     * `filters`: integer, number of convolutional filters
-    * `dropout`: boolean, default = True, probability equals `dropout_prob`
-    * `batch_norm`: boolean, default = False, if batch normalisation should be used
-    * `activation`: boolean, default = True, if an ELU activation should be used
+    * `dropout`: boolean = True, probability equals `dropout_prob`
+    * `batch_norm`: boolean = False, if batch normalisation should be used
+    * `activation`: boolean = True, if an ELU activation should be used
 * `upsample`: Linear interpolation scales layer input by two
 * `conv_depth_downscale`: Reduces $C$ to one, uses kernel size of 1, same padding and ELU
-    * `batch_norm`: boolean, default = False, if batch normalisation should be used
-    * `activation`: boolean, default = True, if an ELU activation should be used
+    * `batch_norm`: boolean = False, if batch normalisation should be used
+    * `activation`: boolean = True, if an ELU activation should be used
 * `conv_downscale`: Downscales the layer input by two through strided convolution,
   uses kernel size of 2, padding of 1 using replicate and stride 2, uses ELU
     * `filters`: integer, number of convolutional filters
-    * `dropout`: boolean, default = True, probability equals `dropout_prob`
-    * `batch_norm`: boolean, default = False, if batch normalisation should be used
-    * `activation`: boolean, default = True, if an ELU activation should be used
+    * `dropout`: boolean = True, probability equals `dropout_prob`
+    * `batch_norm`: boolean = False, if batch normalisation should be used
+    * `activation`: boolean = True, if an ELU activation should be used
 * `pool`: Downscales the layer input by two using max pooling
 * `reshape`: Reshapes the dimensions
     * `output`: tuple[integer] or tuple[integer, integer], dimensions of the output of the layer,
@@ -547,6 +547,9 @@ Going from 3D to 2D, `reshape` will use `output = [-1]`
     * `number`: integer, number of values to extract from the previous layer
 * `clone`: Clones a number of features from the previous layer
     * `number`: integer, number of values to clone from the previous layer
+* `index`: Slices the output from the previous layer
+    * `number`: integer, index slice number
+    * `greater`: boolean = True, if slice should be values greater or less than _number_
 * `concatenate`: Concatenates the previous layer with a specified layer
     * `layer`: integer, layer index to concatenate the previous layer with
 * `shortcut`: Adds the previous layer with the specified layer

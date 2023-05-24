@@ -529,6 +529,7 @@ def plot_param_distribution(
         name: str,
         data_paths: list[str],
         config: dict,
+        y_axis: bool = True,
         labels: list[str] = None):
     """
     Plots histogram of each parameter for both true and predicted
@@ -541,6 +542,8 @@ def plot_param_distribution(
         Paths to the parameters to plot
     config : dictionary
         Configuration dictionary
+    y_axis : boolean, default = True
+        If the y-axis ticks should be plotted
     labels : list[string], default = None
         Legend labels for each data path
     """
@@ -549,17 +552,15 @@ def plot_param_distribution(
     param_names = config['model']['parameter-names']
     plots_dir = config['output']['plots-directory']
 
-    axes = _initialize_plot(
-        subplot_grid(len(param_names)),
-        legend=True,
-        gridspec_kw={'bottom': 0.1, 'right': 0.95, 'hspace': 0.25},
-    )
+    if y_axis:
+        gridspec_kw = {'bottom': 0.1, 'right': 0.95, 'hspace': 0.25}
+    else:
+        gridspec_kw = {'bottom': 0.1, 'left': 0.01, 'hspace': 0.25}
+
+    axes = _initialize_plot(subplot_grid(len(param_names)), legend=True, gridspec_kw=gridspec_kw)
 
     for data_path in data_paths:
-        params.append(np.swapaxes(load_params(
-            data_path,
-            load_kwargs={'usecols': range(1, 6)},
-        )[1], 0, 1))
+        params.append(np.swapaxes(load_params(data_path)[1], 0, 1))
 
     # Plot subplots
     for i, (title, *param, axis) in enumerate(zip(param_names, *params, axes.values())):
@@ -577,6 +578,10 @@ def plot_param_distribution(
         twin_axis = _plot_histogram(param[0], axis, log=log, labels=labels, data_twin=data_twin)
         axis.set_xlabel(title, fontsize=MAJOR)
 
+        if not y_axis:
+            axis.tick_params(labelleft=False, left=False)
+            twin_axis.tick_params(labelright=False, right=False)
+
     if twin_axis:
         labels = np.hstack((
             axes[0].get_legend_handles_labels(),
@@ -585,7 +590,7 @@ def plot_param_distribution(
     elif labels:
         labels = axes[0].get_legend_handles_labels()
 
-    if labels:
+    if labels is not None:
         _legend(labels)
 
     plt.savefig(plots_dir + name)

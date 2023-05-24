@@ -1,0 +1,80 @@
+{
+  "net": {
+    "dropout_prob": 0.05
+  },
+  "layers": [
+    {
+      "type": "index",
+      "number": -2,
+      "greater": 0
+    },
+    {
+      "type": "reshape",
+      "output": [1, -1]
+    },
+    {
+      "type": "conv_downscale",
+      "filters": 16
+    },
+    {
+      "type": "convolutional",
+      "filters": 32,
+      "batch_norm": 1
+    },
+    {
+      "type": "conv_downscale",
+      "filters": 32
+    },
+    {
+      "type": "convolutional",
+      "filters": 32
+    },
+    {
+      "type": "conv_downscale",
+      "filters": 32
+    },
+    {
+      "type": "convolutional",
+      "filters": 32,
+      "batch_norm": 1
+    },
+    {
+      "type": "reshape",
+      "output": [-1]
+    },
+    {
+      "type": "skip",
+      "layer": 0
+    },
+    {
+      "type": "index",
+      "number": -2,
+      "greater": 1
+    },
+    {
+      "type": "concatenate",
+      "layer": -3
+    },
+    {
+      "type": "linear",
+      "features": 120,
+      "dropout": 1
+    },
+    {
+      "type": "linear",
+      "features": 120
+    },
+    {
+      "type": "linear",
+      "features": 120
+    },
+    {
+      "type": "shortcut",
+      "layer": -3
+    },
+    {
+      "type": "linear",
+      "factor": 1
+    }
+  ]
+}

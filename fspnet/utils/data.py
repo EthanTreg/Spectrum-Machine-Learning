@@ -60,6 +60,7 @@ class SpectrumDataset(Dataset):
             data = pickle.load(file)
 
         self.spectra = np.array(data['spectra'])
+        self.uncertainty = np.array(data['uncertainties'])
 
         # Get spectra names if available
         if 'names' in data:
@@ -82,9 +83,11 @@ class SpectrumDataset(Dataset):
             mean=False,
             transform=self.transform[0],
         )
+        self.uncertainty /= self.transform[0][1]
 
         # Make sure spectra & uncertainty length is even
         self.spectra = _even_length(torch.from_numpy(self.spectra).float())
+        self.uncertainty = _even_length(torch.from_numpy(self.uncertainty).float())
 
         # If no parameters are provided
         if 'params' not in data:
@@ -105,7 +108,7 @@ class SpectrumDataset(Dataset):
     def __len__(self) -> int:
         return self.spectra.shape[0]
 
-    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, str | int]:
+    def __getitem__(self, idx: int) -> tuple[int | str, Tensor, Tensor, Tensor]:
         """
         Gets the training data for a given index
 
@@ -116,10 +119,10 @@ class SpectrumDataset(Dataset):
 
         Returns
         -------
-        tuple[Tensor, Tensor, string | integer]
-            Spectrum data, target parameters, and spectrum name/number
+        tuple[integer | string, Tensor, Tensor, Tensor]
+            Spectrum name/number, spectrum data, target parameters, and uncertainty
         """
-        return self.spectra[idx], self.params[idx], self.names[idx]
+        return self.names[idx], self.spectra[idx], self.params[idx], self.uncertainty[idx]
 
     def downscaler(self, downscales: int):
         """
@@ -239,6 +242,11 @@ def load_params(data_path: str, load_kwargs: dict = None) -> tuple[ndarray, ndar
     tuple[ndarray, ndarray]
         Names and parameters
     """
+    if load_kwargs:
+        load_kwargs['dtype'] = str
+    else:
+        load_kwargs = {'dtype': str}
+
     data = load_data(data_path, load_kwargs=load_kwargs)
 
     if '.pickle' in data_path:

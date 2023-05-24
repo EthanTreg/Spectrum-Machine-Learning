@@ -164,6 +164,10 @@ class Sample(nn.Module):
 
     Attributes
     ----------
+    mean_layer : Module
+        Linear layer to predict values for the mean of the distribution
+    std_layer : Module
+        Linear layer to predict values for the standard deviation of the distribution
     sample_layer : Module
         Layer to sample values from a Gaussian distribution
 
@@ -173,6 +177,14 @@ class Sample(nn.Module):
         Forward pass of the sampling layer
     """
     def __init__(self, in_features: int, out_features: int):
+        """
+        Parameters
+        ----------
+        in_features : integer
+            Number of input features for linear layer
+        out_features : integer
+            Number of output features for linear layer
+        """
         super().__init__()
         device = get_device()[1]
 
@@ -203,6 +215,55 @@ class Sample(nn.Module):
         kl_loss = 0.5 * torch.mean(mean ** 2 + std ** 2 - 2 * torch.log(std) - 1)
 
         return x, kl_loss
+
+
+class Index(nn.Module):
+    """
+    Indexes tensor using slicing
+
+    Attributes
+    ----------
+    number : integer
+        Number of values to slice, can be negative
+    greater : boolean, default = True
+        If slicing should include all values greater or less than number index
+
+    Methods
+    -------
+    forward(x)
+        Forward pass of the indexing layer
+    """
+    def __init__(self, number: int, greater: bool = True):
+        """
+        Parameters
+        ----------
+        number : integer
+            Number of values to slice, can be negative
+        greater : boolean, default = True
+            If slicing should include all values greater or less than number index
+        """
+        super().__init__()
+        self.number = number
+        self.greater = greater
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass of the indexing layer
+
+        Parameters
+        ----------
+        x : Tensor
+            Input tensor
+
+        Returns
+        -------
+        Tensor
+            Output tensor
+        """
+        if self.greater:
+            return x[..., self.number:]
+
+        return x[..., :self.number]
 
 
 def _optional_layer(
@@ -843,6 +904,49 @@ def clone(kwargs: dict, _: dict) -> dict:
     """
     kwargs['dims'].append(kwargs['dims'][-1])
     kwargs['data_size'].append(kwargs['data_size'][-1])
+    return kwargs
+
+
+def index(kwargs: dict, layer: dict) -> dict:
+    """
+    Constructs a layer to slice the output from the previous layer
+
+    Parameters
+    ----------
+    kwargs : dictionary
+        data_size : list[integer]
+            Hidden layer output length;
+        dims : list[integer]
+            Dimensions in each layer, either linear output features or convolutional/GRU filters;
+        module : Sequential
+            Sequential module to contain the layer;
+    layer : dictionary
+        number : integer
+            Index slice number;
+        greater : boolean, default = True
+            If slice should be values greater or less than number
+
+    Returns
+    -------
+    dictionary
+        Returns the input kwargs with any changes made by the function
+    """
+    kwargs['dims'].append(kwargs['dims'][-1])
+
+    if 'greater' in layer and (
+            (layer['greater'] and layer['number'] < 0) or
+            (not layer['greater'] and layer['number'] > 0)
+    ):
+        data_size = abs(layer['number'])
+    else:
+        data_size = kwargs['data_size'][-1] - abs(layer['number'])
+
+    kwargs['data_size'].append(data_size)
+    kwargs['module'].add_module(
+        f"index_{kwargs['i']}",
+        Index(layer['number'], greater=layer['greater']),
+    )
+
     return kwargs
 
 

@@ -109,7 +109,7 @@ def train_val(
             surrogate.eval()
 
     with torch.set_grad_enabled(train):
-        for spectra, params, *_ in loader:
+        for _, spectra, params, _ in loader:
             loss = torch.tensor(0.).to(device)
             spectra = spectra.to(device)
             params = params.to(device)
