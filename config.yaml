@@ -57,9 +57,9 @@ spectrum-fit:
     # File number to save encoder progress
     encoder-save: 0
     # File number to load decoder state
-    decoder-load: 0
+    decoder-load: 4
     # File number to load encoder state
-    encoder-load: 0
+    encoder-load: 2
     # Number of epochs to train for
     epochs: 100
     # Number of inputs to process between network weight updates
@@ -91,6 +91,9 @@ spectrum-fit:
   model:
     # Number of iterations for traditional PyXspec fitting
     iterations: 60
+    # Number of iterations before calculating fit statistic for tracking progress,
+    # set this to iterations if you don't want to track the evolution
+    step: 2
     # Number of free parameters
     parameters-number: *parameters_number
     # Xspec model to use

@@ -15,17 +15,15 @@ from fspnet.utils.data import data_initialisation
 from fspnet.utils.utils import open_config, get_device
 from fspnet.utils.network import load_network, Network
 from fspnet.utils.training import training, pyxspec_test
-from fspnet.utils.analysis import (
-    autoencoder_saliency,
-    decoder_saliency,
-    linear_weights,
-)
+from fspnet.utils.analysis import autoencoder_saliency, decoder_saliency
 from fspnet.utils.plots import (
     plot_saliency,
     plot_param_pairs,
     plot_param_distribution,
     plot_param_comparison,
     plot_linear_weights,
+    plot_encoder_pgstats,
+    plot_pgstat_iterations,
     plot_training,
 )
 
@@ -54,6 +52,7 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
             config['data']['spectra-directory'],
         ],
         'iterations': config['model']['iterations'],
+        'step': config['model']['step'],
         'fix_params': config['model']['fixed-parameters'],
         'model': config['model']['model-name'],
         'custom_model': config['model']['custom-model-name'],
@@ -333,7 +332,14 @@ def main(config_path: str = '../config.yaml'):
     plot_training('Autoencoder', plots_dir, *encoder_return)
 
     # Plot linear weight mappings
-    plot_linear_weights(config, linear_weights(decoder))
+    plot_linear_weights(config, decoder)
+    plot_encoder_pgstats(f'{plots_dir}{worker_dir}Encoder_Xspec_output.csv', config)
+    plot_pgstat_iterations(
+        [f'{worker_dir}Encoder_Xspec_output_60.csv',
+         f'{worker_dir}Default_Xspec_output_60.csv'],
+        ['Encoder', 'Defaults'],
+        config,
+    )
 
     # Generate parameter predictions
     predict_parameters(config=config)

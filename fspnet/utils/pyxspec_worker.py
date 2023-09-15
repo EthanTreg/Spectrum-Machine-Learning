@@ -6,9 +6,10 @@ import os
 import xspec
 import numpy as np
 from mpi4py import MPI
+from numpy import ndarray
 
 from fspnet.utils.utils import progress_bar
-from fspnet.utils.workers import initialize_worker
+from fspnet.utils.workers import initialize_worker, initialize_pyxspec
 
 
 class PyXspecFitting:
@@ -82,7 +83,7 @@ class PyXspecFitting:
                 limits = np.array(self.model(j).values)[[2, 5]]
                 self.param_limits = np.vstack((self.param_limits, limits))
 
-    def _fit_statistic(self, params: np.ndarray) -> float:
+    def _fit_statistic(self, params: ndarray) -> float:
         """
         Measures the quality of fit for the given parameters
 
@@ -91,7 +92,7 @@ class PyXspecFitting:
         Parameters
         ----------
         params : ndarray
-            Parameter predictions from CNN
+            params to calculate the fit statistics for
 
         Returns
         -------
@@ -116,10 +117,41 @@ class PyXspecFitting:
         # Calculate fit statistic loss
         return xspec.Fit.statistic / xspec.Fit.dof
 
-    def fit_loss(
-            self,
-            names: list[str],
-            params: np.ndarray) -> list[float]:
+    def _iterative_fit(self, params: ndarray, step: int = 2) -> list[float]:
+        """
+        Iteratively fits the model to track the fit statistics after every step iterations
+
+        Parameters
+        ----------
+        params : ndarray
+            params to calculate the fit statistics for
+        step : integer, default = 2
+            Number of fit iterations to perform before calculating the fit statistic
+
+        Returns
+        -------
+        list[float]
+            Fit statistics after every step
+        """
+        losses = []
+        iterations = xspec.Fit.nIterations
+        xspec.Fit.nIterations = step
+        free_param_idxs = np.arange(self.model.nParameters) + 1
+        free_param_idxs = np.setdiff1d(free_param_idxs, list(self.fixed_params.keys()))
+
+        # Loop through every step iterations and calculate fit statistic
+        for _ in range(0, iterations, step):
+            losses.append(self._fit_statistic(params))
+
+            # Save free parameters
+            for i, idx in enumerate(free_param_idxs):
+                params[i] = self.model(int(idx)).values[0]
+
+        xspec.Fit.nIterations = iterations
+
+        return losses
+
+    def fit_loss(self, names: ndarray, params: ndarray, step: int = 2) -> list[float]:
         """
         Custom loss function using PyXspec to calculate statistic for Poisson data
         and Gaussian background (PGStat) and L1 loss for parameters that exceed limits
@@ -129,7 +161,9 @@ class PyXspecFitting:
         names : list[string]
             Spectra names
         params : ndarray
-            Output from CNN of parameter predictions between 0 & 1
+            params to calculate the fit statistics for
+        step : integer, default = 2
+            Number of fit iterations to perform before calculating the fit statistic
 
         Returns
         -------
@@ -151,7 +185,8 @@ class PyXspecFitting:
             xspec.AllData.ignore('0.0-0.3 10.0-**')
 
             # Calculate fit statistic
-            losses.append(self._fit_statistic(spectrum_params))
+            # losses.append(self._fit_statistic(spectrum_params))
+            losses.append(self._iterative_fit(spectrum_params, step=step))
 
             xspec.AllData.clear()
 
@@ -162,50 +197,6 @@ class PyXspecFitting:
 
         # Average loss of batch
         return losses
-
-
-def initialize_pyxspec(
-        model_name: str,
-        iterations: int = 10,
-        custom_model: str = None,
-        model_dir: str = None) -> xspec.Model:
-    """
-    Initialises PyXspec
-
-    Parameters
-    ----------
-    model_name : string
-        Name of model to load
-    iterations : integer, default = 10
-        Number of fitting iterations to perform during fit operation
-    custom_model : string, default = None
-        Name of a custom model to load
-    model_dir : string, default = None
-        Path to the directory containing the model for PyXspec to load
-
-    Returns
-    -------
-    Model
-        PyXspec model
-    """
-    # Prevent PyXspec terminal output
-    xspec.Xset.chatter = 0
-    xspec.Xset.logChatter = 0
-
-    # Load custom model
-    if custom_model:
-        xspec.AllModels.lmod(custom_model, dirPath=model_dir)
-
-    model = xspec.Model(model_name)
-    xspec.AllModels.setEnergies('0.002 200 2000 log')
-    xspec.Xset.abund = 'wilm'
-
-    # Fit options
-    xspec.Fit.statMethod = 'pgstat'
-    xspec.Fit.query = 'no'
-    xspec.Fit.nIterations = iterations
-
-    return model
 
 
 def worker():
@@ -234,11 +225,12 @@ def worker():
 
     # Calculate average loss of the batch
     os.chdir(data['dirs'][1])
-    losses = model.fit_loss(names, params)
+    losses = model.fit_loss(names, params, step=data['step'])
     os.chdir(data['dirs'][0])
 
     # Save results
-    job = np.hstack((job, np.expand_dims(losses, axis=1)))
+    # job = np.hstack((job, np.expand_dims(losses, axis=1)))
+    job = np.hstack((job, losses))
     np.savetxt(f'{worker_dir}worker_{rank}_job.csv', job, delimiter=',', fmt='%s')
 
     print(f'Worker {rank} done')

@@ -7,6 +7,7 @@ from argparse import ArgumentParser
 import yaml
 import torch
 import numpy as np
+from numpy import ndarray
 
 
 def _interactive_check() -> bool:
@@ -153,6 +154,56 @@ def file_names(data_dir: str, blacklist: list[str] = None, whitelist: str = None
         files = np.delete(files, np.char.find(files, substring) != -1)
 
     return files
+
+
+def name_sort(
+        names: list[ndarray, ndarray],
+        data: list[ndarray, ndarray],
+        shuffle=True) -> tuple[list[ndarray, ndarray], list[ndarray, ndarray]]:
+    """
+    Sorts names and data so that two arrays contain the same names
+
+    Parameters
+    ----------
+    names : list[ndarray, ndarray]
+        Name arrays to sort
+    data : list[ndarray, ndarray]
+        Data arrays to sort from corresponding name arrays
+    shuffle : boolean, default = True
+        If name and data arrays should be shuffled
+
+    Returns
+    -------
+    tuple[list[ndarray, ndarray], list[ndarray, ndarray]]
+        Sorted name and data arrays
+    """
+    # Sort for longest dataset first
+    sort_idx = np.argsort([datum.shape[0] for datum in data])[::-1]
+    data = [data[i] for i in sort_idx]
+    names = [names[i] for i in sort_idx]
+
+    # Sort target spectra by name
+    name_sort_idx = np.argsort(names[0])
+    names[0] = names[0][name_sort_idx]
+    data[0] = data[0][name_sort_idx]
+
+    # Filter target parameters using spectra that was predicted and log parameters
+    target_idx = np.searchsorted(names[0], names[1])
+    names[0] = names[0][target_idx]
+    data[0] = data[0][target_idx]
+
+    # Shuffle params
+    if shuffle:
+        shuffle_idx = np.random.permutation(data[0].shape[0])
+        names[0] = names[0][shuffle_idx]
+        names[1] = names[1][shuffle_idx]
+        data[0] = data[0][shuffle_idx]
+        data[1] = data[1][shuffle_idx]
+
+    data = [data[i] for i in sort_idx]
+    names = [names[i] for i in sort_idx]
+
+    return names, data
 
 
 def get_device() -> tuple[dict, torch.device]:

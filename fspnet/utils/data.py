@@ -96,14 +96,29 @@ class SpectrumDataset(Dataset):
 
         self.params = np.array(data['params'])
 
+        if 'param_uncertainty' in data:
+            self.param_uncertainty = np.abs(data['param_uncertainty'])
+
         # Transform parameters
-        self.params[:, log_params] = np.log10(self.params[:, log_params])
+        if log_params and 'param_uncertainty' in data:
+            self.param_uncertainty[:, log_params] = np.abs(
+                self.param_uncertainty[:, log_params] / (np.log(10) * self.params[:, log_params])
+            )
+            self.params[:, log_params] = np.log10(self.params[:, log_params])
+        elif log_params:
+            self.params[:, log_params] = np.log10(self.params[:, log_params])
+
         self.params, self.transform[1] = data_normalization(
             self.params,
             axis=0,
             transform=self.transform[1],
         )
+
+        if 'param_uncertainty' in data:
+            self.param_uncertainty /= self.transform[1][1]
+
         self.params = torch.from_numpy(self.params).float()
+        self.param_uncertainty = torch.from_numpy(self.param_uncertainty).float()
 
     def __len__(self) -> int:
         return self.spectra.shape[0]
@@ -250,15 +265,17 @@ def load_params(data_path: str, load_kwargs: dict = None) -> tuple[ndarray, ndar
     data = load_data(data_path, load_kwargs=load_kwargs)
 
     if '.pickle' in data_path:
+        params = np.array(data['params'])
+
         if 'names' in data:
             names = np.array(data['names'])
         else:
-            names = np.arange(len(data['params']), dtype=float).astype(str)
-
-        params = np.array(data['params'])
+            names = np.arange(data['params'].shape[0], dtype=float).astype(str)
     elif '.csv' in data_path:
         names = data[:, 0]
         params = data[:, 1:].astype(float)
+    else:
+        raise TypeError(f'File type unknown for {data_path}')
 
     return names, params
 

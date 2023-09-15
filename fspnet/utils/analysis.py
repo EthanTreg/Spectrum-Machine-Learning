@@ -9,8 +9,8 @@ from numpy import ndarray
 from torch.utils.data import DataLoader
 
 from fspnet.utils.network import Network
-from fspnet.utils.data import load_params
-from fspnet.utils.utils import get_device
+from fspnet.utils.utils import get_device, name_sort
+from fspnet.utils.data import load_params, load_data
 
 
 def autoencoder_saliency(
@@ -74,7 +74,7 @@ def decoder_saliency(loader: DataLoader, decoder: Network):
     torch.backends.cudnn.enabled = False
     decoder.eval()
 
-    for spectra, params, *_ in loader:
+    for _, spectra, params, *_ in loader:
         spectra = spectra.to(device)
         params = params.to(device)
         params.requires_grad_()
@@ -123,24 +123,7 @@ def param_comparison(data_paths: tuple[str, str]) -> tuple[ndarray, ndarray]:
         names.append(returns[0])
         params.append(returns[1])
 
-    # Sort for longest dataset first
-    sort_idx = np.argsort([param.shape[0] for param in params])[::-1]
-    params = [params[i] for i in sort_idx]
-    names = [names[i] for i in sort_idx]
-
-    # Sort target spectra by name
-    name_sort_idx = np.argsort(names[0])
-    names[0] = names[0][name_sort_idx]
-    params[0] = params[0][name_sort_idx]
-
-    # Filter target parameters using spectra that was predicted and log parameters
-    target_idx = np.searchsorted(names[0], names[1])
-    params[0] = params[0][target_idx]
-    shuffle_idx = np.random.permutation(params[0].shape[0])
-    params[0] = params[0][shuffle_idx]
-    params[1] = params[1][shuffle_idx]
-
-    params = [params[i] for i in sort_idx]
+    names, params = name_sort(names, params)
 
     return np.swapaxes(params[0], 0, 1), np.swapaxes(params[1], 0, 1)
 
@@ -187,3 +170,31 @@ def linear_weights(network: Network) -> ndarray:
         param_weights.append(weight)
 
     return np.array(param_weights)
+
+
+def encoder_pgstats(loss_file: str, spectra_file: str):
+    """
+    Gets the data and sorts it for comparing the encoder PGStats against
+    the maximum of the corresponding spectrum
+
+    Parameters
+    ----------
+    loss_file : string
+        Path to the file that contains the PGStats for each spectrum
+    spectra_file : string
+        Path to the spectra with
+    """
+    data = np.loadtxt(loss_file, delimiter=',', dtype=str)
+    loss_names = data[:, 0]
+    losses = data[:, -1]
+
+    data = load_data(spectra_file)
+    spectra_names = data['names']
+    spectra_max = np.max(data['spectra'], axis=1)
+
+    _, (losses, spectra_max) = name_sort(
+        [loss_names, spectra_names],
+        [losses, spectra_max],
+    )
+
+    return losses, spectra_max

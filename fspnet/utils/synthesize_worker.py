@@ -14,8 +14,7 @@ from astropy.io import fits
 
 from fspnet.utils.utils import progress_bar
 from fspnet.utils.preprocessing import spectrum_data
-from fspnet.utils.pyxspec_worker import initialize_pyxspec
-from fspnet.utils.workers import initialize_worker
+from fspnet.utils.workers import initialize_worker, initialize_pyxspec
 
 
 def _uniform_sample(

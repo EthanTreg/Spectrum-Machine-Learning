@@ -8,23 +8,25 @@ from numpy import ndarray
 from matplotlib.axes import Axes
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+from fspnet.utils.network import Network
 from fspnet.utils.utils import subplot_grid
-from fspnet.utils.analysis import param_comparison
 from fspnet.utils.data import load_params, load_x_data
+from fspnet.utils.analysis import param_comparison, linear_weights, encoder_pgstats
 
 MAJOR = 24
 MINOR = 20
 FIG_SIZE = (16, 9)
+SCATTER_NUM = 1000
 
 
-def _legend(labels: ndarray, columns: int = 2) -> matplotlib.legend.Legend:
+def _legend(labels: list | ndarray, columns: int = 2) -> matplotlib.legend.Legend:
     """
     Plots a legend across the top of the plot
 
     Parameters
     ----------
-    labels : ndarray
-        Legend matplotlib handels and labels as an array to be unpacked into handels and labels
+    labels : list | ndarray
+        Legend matplotlib handles and labels as an array to be unpacked into handles and labels
     columns : integer, default = 2
         Number of columns for the legend
 
@@ -50,22 +52,25 @@ def _legend(labels: ndarray, columns: int = 2) -> matplotlib.legend.Legend:
 
 
 def _initialize_plot(
-        subplots: str | tuple[int, int] | list,
+        subplots: str | tuple[int, int] | list | ndarray,
         legend: bool = False,
+        subplot_titles: bool = False,
         x_label: str = None,
         y_label: str = None,
         plot_kwargs: dict = None,
-        gridspec_kw: dict = None) -> ndarray:
+        gridspec_kw: dict = None) -> dict | ndarray:
     """
     Initializes subplots using either mosaic or subplots
 
     Parameters
     ----------
-    subplots : string | tuple[integer, integer] | list
+    subplots : string | tuple[integer, integer] | list | ndarray
         Argument for subplot or mosaic layout, mosaic will use string or list
         and subplots will use tuple
     legend : boolean, default = False,
         If the figure will have a legend at the top, then space will be made
+    subplot_titles : bool, default = False,
+        If each subplot has a title
     x_label : string, default = None
         X label for the plot
     y_label : string, default = None
@@ -77,9 +82,10 @@ def _initialize_plot(
 
     Returns
     -------
-    ndarray
+    dictionary | ndarray
         Subplot axes
     """
+    text_offset = 0.03
     gridspec = {
         'top': 0.95,
         'bottom': 0.05,
@@ -94,13 +100,17 @@ def _initialize_plot(
 
     # Gridspec commands for optional layouts
     if legend:
-        gridspec['top'] = 0.92
+        gridspec['top'] -= text_offset
+
+    if subplot_titles:
+        gridspec['hspace'] += 0.2
+        gridspec['top'] -= text_offset
 
     if x_label:
-        gridspec['bottom'] = 0.08
+        gridspec['bottom'] += text_offset
 
     if y_label:
-        gridspec['left'] = 0.09
+        gridspec['left'] += text_offset
 
     if gridspec_kw:
         gridspec = gridspec | gridspec_kw
@@ -212,7 +222,7 @@ def _plot_reconstruction(
 
 def _plot_reconstructions(
         spectra: ndarray,
-        outputs: ndarray) -> tuple[list[plt.Axes], list[plt.Axes], matplotlib.legend.Legend]:
+        outputs: ndarray) -> tuple[list[plt.Axes], ndarray, matplotlib.legend.Legend]:
     """
     Plots reconstructions and residuals for 4 spectra
 
@@ -225,7 +235,7 @@ def _plot_reconstructions(
 
     Returns
     -------
-    tuple[list[Axes], list[Axes], Legend]
+    tuple[list[Axes], ndarray, Legend]
         Major axes, minor axes and legend
     """
     major_axes = []
@@ -442,8 +452,8 @@ def plot_param_pairs(
                 axis.tick_params(labelleft=False, left=False)
             elif j < i:
                 axis.scatter(
-                    x_param[0][:1000],
-                    y_param[0][:1000],
+                    x_param[0][:SCATTER_NUM],
+                    y_param[0][:SCATTER_NUM],
                     s=4,
                     alpha=0.2,
                     label=labels[0],
@@ -456,8 +466,8 @@ def plot_param_pairs(
 
             if j < i and len(x_param) > 1:
                 axis.scatter(
-                    x_param[1][:1000],
-                    y_param[1][:1000],
+                    x_param[1][:SCATTER_NUM],
+                    y_param[1][:SCATTER_NUM],
                     s=4,
                     alpha=0.2,
                     color='orange',
@@ -496,32 +506,40 @@ def plot_param_comparison(param_names: list[str], config: dict):
         config['data']['encoder-data-path'],
         config['output']['parameter-predictions-path'],
     ))
+    colours = np.array(['blue'] * SCATTER_NUM, dtype=object)
 
-    _, axes = plt.subplot_mosaic(
-        subplot_grid(len(param_names)),
-        constrained_layout=True,
-        figsize=FIG_SIZE,
-    )
+    axes = _initialize_plot(subplot_grid(len(param_names)), legend=True, subplot_titles=True)
+
+    # Highlight parameters that are maximally or minimally constrained
+    for target_param in target[:, :SCATTER_NUM]:
+        colours[np.argwhere(
+            (target_param == np.max(target_param)) |
+            (target_param == np.min(target_param))
+        )] = 'red'
 
     # Plot each parameter
     for i, (name, axis, target_param, predicted_param) in enumerate(zip(
         param_names,
         axes.values(),
-        target[:, :1000],
-        prediction[:, :1000])):
-        value_range = [
-            min(np.min(target_param), np.min(predicted_param)),
-            max(np.max(target_param), np.max(predicted_param))
-        ]
-        axis.scatter(target_param, predicted_param, alpha=0.2)
+        target[:, :SCATTER_NUM],
+        prediction[:, :SCATTER_NUM])):
+        value_range = [np.min(target_param), np.max(target_param)]
+
+        axis.scatter(target_param, predicted_param, color=colours, alpha=0.2)
         axis.plot(value_range, value_range, color='k')
         axis.set_title(name, fontsize=MAJOR)
         axis.tick_params(labelsize=MINOR)
+        axis.xaxis.get_offset_text().set_visible(False)
+        axis.yaxis.get_offset_text().set_size(MINOR)
 
         if i in log_params:
             axis.set_xscale('log')
             axis.set_yscale('log')
 
+    _legend([[
+        plt.scatter([], [], color='blue', label='Unconstrained'),
+        plt.scatter([], [], color='red'),
+    ], ['Unconstrained', 'Constrained']])
     plt.savefig(f'{plots_dir}Parameter_Comparison.png', transparent=False)
 
 
@@ -596,7 +614,7 @@ def plot_param_distribution(
     plt.savefig(plots_dir + name)
 
 
-def plot_linear_weights(config: dict, weights: ndarray):
+def plot_linear_weights(config: dict, network: Network):
     """
     Plots the mappings of the weights from the lowest dimension
     to a high dimension for the linear layers
@@ -605,11 +623,12 @@ def plot_linear_weights(config: dict, weights: ndarray):
     ----------
     config : dictionary
         Configuration dictionary
-    weights : ndarray
-        Mappings of low dimension to high dimension
+    network : Network
+        Neural network to calculate the linear weights mapping
     """
     plots_dir = config['output']['plots-directory']
     param_names = config['model']['parameter-names']
+    weights = linear_weights(network)
 
     axes = _initialize_plot('AABBCC;DDDEEE', x_label='Energy (keV)', gridspec_kw={'hspace': 0.2})
 
@@ -619,6 +638,73 @@ def plot_linear_weights(config: dict, weights: ndarray):
         axis.tick_params(labelsize=MINOR)
 
     plt.savefig(f'{plots_dir}Linear_Weights_Mappings.png')
+
+
+def plot_encoder_pgstats(loss_file: str, config: dict):
+    """
+    Plots the encoder's PGStat against the corresponding spectrum maximum
+
+    Parameters
+    ----------
+    loss_file : string
+        Path to the file that contains the PGStats for each spectrum
+    config : dictionary
+        Configuration dictionary
+    """
+    plots_dir = config['output']['plots-directory']
+    spectra_file = config['data']['encoder-data-path']
+
+    losses, spectra_max = encoder_pgstats(loss_file, spectra_file)
+    losses = losses[:SCATTER_NUM]
+    spectra_max = spectra_max[:SCATTER_NUM]
+
+    plt.figure(figsize=FIG_SIZE, constrained_layout=True)
+    plt.scatter(spectra_max, losses)
+    plt.xlabel(
+        r'Spectrum Maximum $(\mathrm{Counts}\ s^{-1}\ \mathrm{detector}^{-1}\ keV^{-1})$',
+        fontsize=MAJOR,
+    )
+    plt.ylabel('PGStat', fontsize=MAJOR)
+    plt.yscale('log')
+    plt.xticks(fontsize=MINOR)
+    plt.yticks(fontsize=MINOR)
+    plt.savefig(f'{plots_dir}Encoder_PGStats.png')
+
+
+def plot_pgstat_iterations(loss_files: list[str], names: list[str], config: dict):
+    """
+    Plots the median PGStat for every step iterations of Xspec fitting from the provided loss files
+
+    Parameters
+    ----------
+    loss_files : list[string]
+        Files with losses for each step
+    names : list[string]
+        Plot name for each loss file
+    config : dictionary
+        Configuration dictionary
+    """
+    step = config['model']['step']
+    num_params = config['model']['parameters-number']
+    plots_dir = config['output']['plots-directory']
+    losses = []
+
+    for loss_file in loss_files:
+        data = np.loadtxt(loss_file, delimiter=',', dtype=str)
+        losses.append(np.median(data[:, num_params + 1:].astype(float), axis=0))
+
+    plt.figure(figsize=(16, 9), constrained_layout=True)
+
+    for name, loss in zip(names, losses):
+        plt.plot(np.arange(loss.size) * step + step, loss, label=name)
+
+    plt.xlabel('Xspec Fitting Iterations', fontsize=MAJOR)
+    plt.ylabel('Median Reduced PGStat', fontsize=MAJOR)
+    plt.xticks(fontsize=MINOR)
+    plt.yticks(fontsize=MINOR)
+    plt.yscale('log')
+    _legend(plt.gca().get_legend_handles_labels())
+    plt.savefig(f'{plots_dir}Iteration_Median_PGStat.png')
 
 
 def plot_training(
