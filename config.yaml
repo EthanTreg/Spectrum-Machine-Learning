@@ -57,9 +57,9 @@ spectrum-fit:
     # File number to save encoder progress
     encoder-save: 0
     # File number to load decoder state
-    decoder-load: 4
+    decoder-load: 1
     # File number to load encoder state
-    encoder-load: 2
+    encoder-load: 1
     # Number of epochs to train for
     epochs: 100
     # Number of inputs to process between network weight updates
