@@ -55,12 +55,12 @@ The system specs used to develop the network are:
 * CPU: Intel 6C/12T, 2.6 GHz - 5 GHz (i7-10750H)
 * GPU: NVIDIA 4 GB VRAM, 1035 - 1200 MHz (1650 Ti Max-Q)
 
-NVIDIA GPUs with more than 1 GB of VRAM[^2] are highly recommended.  
+NVIDIA GPUs with more than 1 GB of VRAM[^3] are highly recommended.  
 All CPUs that can run PyTorch should work fine, but will be significantly slower.  
 The code has not been developed for other brands of GPUs or NPUs,
 so it won't take advantage of them.  
 SSDs are also highly recommended as this can speed up data loading times.
-[^2]: If your NVIDIA GPU has less than 1 GB of VRAM,
+[^3]: If your NVIDIA GPU has less than 1 GB of VRAM,
 set `kwargs={}` in `spectrum_fit.py`&rarr;`initialization`
 
 ### 2.3 Training Times
@@ -94,7 +94,7 @@ All file paths can be absolute or relative.
 
 ### 3.1 Using the Pre-Trained FSP-Net
 
-The network has been trained on a simple 5-parameter model from Xspec, _TBabs(simplcutx$\otimes$ezdiskbb)_.  
+The network has been trained on a simple 5-parameter model from Xspec, _TBabs(simplcutx_$\otimes$_ezdiskbb)_.  
 Therefore, weights are provided if this is the desired model for parameter prediction.
 
 #### 3.1.1 Data Requirements
@@ -181,8 +181,6 @@ Alternatively, the script `synthesize_spectra.py` can be used to generate the sp
      * `synthetic-number`: _recommended 100,000_, the more, the better, but the slower the training
    * `data` options:
      * `spectra-directory`: _real spectra fits files path_
-     * `names-path`: _spectra names file path_, not required,
-       leave empty if this doesn't exist
    * `model`:
      * `parameters-number`: _number of free parameters_
      * `model-name`: _Xspec name of the model_
@@ -222,7 +220,7 @@ The following steps assumes you are using the recommended method.
       * `encoder-load`: 0
       * `epochs`: _recommended 100_, more is better, but takes longer and has diminishing returns
       * `network-configs-directory`: `'../network_configs/'`,
-      make sure this directory exists/is correct and contains the file `Encoder V8.json`
+      make sure this directory exists/is correct and contains the files `Encoder V8.json` & `Decoder V8.json`
     * `data` options:
       * `decoder-data-path`: _synthetic spectra file path_
       * `encoder-data-path`: _spectra path_
@@ -365,10 +363,8 @@ To get the predictions, the function `predict_parameters` from `fspnet.spectrum_
 can be used as mentioned in
 [Fitting the Data](https://github.com/EthanTreg/Spectrum-Machine-Learning/blob/master/README.md#314-fitting-the-data).
 
-In addition to this, several parameters in the `spectrum-fit` config file need configuring:
-* `data` options:
-    * `encoder-parameters-path`: _path to the fitted parameters_
-* 'model' options:
+In addition to this, one parameter in the `spectrum-fit` config file needs configuring:
+* `model` options:
     * `parameter-names`: _list of names for each parameter_
 
 All plots will be saved to `spectrum-fit`&rarr;`output`&rarr;`plots-directory`.
@@ -379,14 +375,13 @@ All plots will be saved to `spectrum-fit`&rarr;`output`&rarr;`plots-directory`.
 from fspnet.spectrum_fit import predict_parameters
 from fspnet.utils.plots import plot_param_comparison, plot_param_distribution, plot_param_pairs
 
-plots_dir = config['output']['plots-directory']
 param_names = config['model']['parameter-names']
 
 predict_parameters(config=config)
 
 plot_param_comparison(param_names, config)
 plot_param_distribution(
-    plots_dir,
+    'Encoder Parameter Distribution',
     [config['data']['encoder-data-path'], config['output']['parameter-predictions-path']],
     config,
     labels=('Target', 'Predictions'),
@@ -415,14 +410,16 @@ from fspnet.spectrum_fit import initialization
 from fspnet.utils.plots import plot_saliency
 from fspnet.utils.analysis import autoencoder_saliency, decoder_saliency
 
+plots_dir = config['output']['plots-directory']
+
 # Initialise networks
-d_loaders, decoder = initialization(...)[2:]
+*_, d_loaders, decoder = initialization(...)
 *_, e_loaders, encoder = initialization(...)
 
 # Calculate saliencies
 decoder_saliency(d_loaders[1], decoder)
 saliency_output = autoencoder_saliency(e_loaders[1], encoder, decoder)
-plot_saliency('../plots/', *saliency_output)
+plot_saliency(plots_dir, *saliency_output)
 ```
 
 ### 4.4 Getting the PGStatistics of the Encoder
@@ -502,8 +499,8 @@ Going from 3D to 2D, `reshape` will use `output = [-1]`
     * `stride`: integer = 1, stride of the kernel
     * `padding`: integer or string = 'same',
       input padding, can an integer or _same_ where _same_ preserves the input shape
-* `recurrent`: Recurrent layer with ELU and dropout if true and parameter `layers` > 1:
-    * `dropout`: boolean = True, probability equals `dropout_prob`
+* `recurrent`: Recurrent layer with ELU:
+    * `dropout`: boolean = True, probability equals `dropout_prob`, requires `layers` > 1
     * `batch_norm`: boolean = False, if batch normalisation should be used
     * `activation`: boolean = True, if an ELU activation should be used
     * `layers`: integer = 2, number of GRU layers
