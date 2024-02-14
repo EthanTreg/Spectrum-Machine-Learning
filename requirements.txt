@@ -1,10 +1,12 @@
 astropy~=5.1
-numpy~=1.23.3
+numpy~=1.23.5
 joblib~=1.2.0
 optuna~=3.0.3
 pandas~=1.5.0
-torch~=1.12.1
-matplotlib~=3.6.0
+matplotlib~=3.8.2
 mpi4py~=3.1.4
 PyYAML~=6.0
 PyQt5~=5.15.7
+
+--find-links https://download.pytorch.org/whl/cu118; sys_platform != "darwin"
+torch~=2.1.0

@@ -7,25 +7,16 @@ import logging as log
 from time import time
 
 import torch
-import matplotlib
 import numpy as np
+import matplotlib as mpl
 from torch.utils.data import DataLoader
 
+from fspnet.utils import plots
 from fspnet.utils.data import data_initialisation
 from fspnet.utils.utils import open_config, get_device
 from fspnet.utils.network import load_network, Network
 from fspnet.utils.training import training, pyxspec_test
 from fspnet.utils.analysis import autoencoder_saliency, decoder_saliency
-from fspnet.utils.plots import (
-    plot_saliency,
-    plot_param_pairs,
-    plot_param_distribution,
-    plot_param_comparison,
-    plot_linear_weights,
-    plot_encoder_pgstats,
-    plot_pgstat_iterations,
-    plot_training,
-)
 
 
 def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
@@ -261,27 +252,14 @@ def main(config_path: str = '../config.yaml'):
     e_data_path = config['data']['encoder-data-path']
     d_data_path = config['data']['decoder-data-path']
 
-    # Model parameters
-    param_names = config['model']['parameter-names']
-
     # Output paths
     predictions_path = config['output']['parameter-predictions-path']
     states_dir = config['output']['network-states-directory']
     plots_dir = config['output']['plots-directory']
     worker_dir = config['output']['worker-directory']
 
-    # Initialize Matplotlib display parameters
-    matplotlib.use('qt5agg')
-    # text_color = '#d9d9d9'
-    text_color = '#222222'
-    matplotlib.rcParams.update({
-        'text.color': text_color,
-        'xtick.color': text_color,
-        'ytick.color': text_color,
-        'axes.labelcolor': text_color,
-        'axes.edgecolor': text_color,
-        'axes.facecolor': (0, 0, 1, 0),
-    })
+    # Initialize Matplotlib backend
+    mpl.use('qt5agg')
 
     # Create plots directory
     if not os.path.exists(plots_dir):
@@ -317,7 +295,7 @@ def main(config_path: str = '../config.yaml'):
         states_dir=states_dir,
         losses=d_losses,
     )
-    plot_training('Decoder', plots_dir, *decoder_return)
+    plots.plot_training('Decoder', plots_dir, *decoder_return)
 
     # Train encoder
     encoder_return = training(
@@ -329,12 +307,12 @@ def main(config_path: str = '../config.yaml'):
         losses=e_losses,
         surrogate=decoder,
     )
-    plot_training('Autoencoder', plots_dir, *encoder_return)
+    plots.plot_training('Autoencoder', plots_dir, *encoder_return)
 
     # Plot linear weight mappings
-    plot_linear_weights(config, decoder)
-    plot_encoder_pgstats(f'{plots_dir}{worker_dir}Encoder_Xspec_output.csv', config)
-    plot_pgstat_iterations(
+    plots.plot_linear_weights(config, decoder)
+    plots.plot_encoder_pgstats(f'{plots_dir}{worker_dir}Encoder_Xspec_output.csv', config)
+    plots.plot_pgstat_iterations(
         [f'{worker_dir}Encoder_Xspec_output_60.csv',
          f'{worker_dir}Default_Xspec_output_60.csv'],
         ['Encoder', 'Defaults'],
@@ -343,26 +321,31 @@ def main(config_path: str = '../config.yaml'):
 
     # Generate parameter predictions
     predict_parameters(config=config)
-    plot_param_comparison(param_names, config)
-    plot_param_distribution(
+    plots.plot_param_comparison(config)
+    plots.plot_param_distribution(
         'Decoder_Param_Distribution',
         [d_data_path, predictions_path],
         config,
+        y_axis=False,
         labels=['Target', 'Prediction'],
     )
-    plot_param_distribution(
+    plots.plot_param_distribution(
         'Encoder_Param_Distribution',
         [e_data_path, predictions_path],
         config,
         y_axis=False,
         labels=['Target', 'Prediction'],
     )
-    plot_param_pairs((e_data_path, predictions_path), config, labels=('Targets', 'Predictions'))
+    plots.plot_param_pairs(
+        (e_data_path, predictions_path),
+        config,
+        labels=('Targets', 'Predictions'),
+    )
 
     # Calculate saliencies
     decoder_saliency(d_loaders[1], decoder)
     saliency_output = autoencoder_saliency(e_loaders[1], encoder, decoder)
-    plot_saliency(plots_dir, *saliency_output)
+    plots.plot_saliency(plots_dir, *saliency_output)
 
     if tests:
         pyxspec_tests(config, e_loaders[1].dataset)

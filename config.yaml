@@ -115,7 +115,7 @@ spectrum-fit:
       - 1
     # Model free parameter names for displaying on plots
     parameter-names:
-      - '$N_{H}$'
+      - '$N_{H}$ $(10^{22}\ cm^{-2})$'
       - '$\Gamma$'
       - '$f_{sc}$'
       - '$kT_{\rm disk}$ (keV)'

@@ -8,9 +8,9 @@ from time import time
 import numpy as np
 from numpy import ndarray
 
+from fspnet.utils.multiprocessing import check_cpus
 from fspnet.utils.preprocessing import correct_spectrum_file
 from fspnet.utils.utils import progress_bar, file_names, open_config
-from fspnet.utils.multiprocessing import check_cpus
 
 
 def _worker(

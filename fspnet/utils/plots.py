@@ -2,10 +2,11 @@
 Creates several plots
 """
 import numpy as np
-import matplotlib
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from numpy import ndarray
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from fspnet.utils.network import Network
@@ -13,13 +14,17 @@ from fspnet.utils.utils import subplot_grid
 from fspnet.utils.data import load_params, load_x_data
 from fspnet.utils.analysis import param_comparison, linear_weights, encoder_pgstats
 
-MAJOR = 24
-MINOR = 20
+MAJOR = 28
+MINOR = 24
 FIG_SIZE = (16, 9)
 SCATTER_NUM = 1000
 
 
-def _legend(labels: list | ndarray, columns: int = 2) -> matplotlib.legend.Legend:
+def _legend(
+        labels: list | ndarray,
+        fig: Figure,
+        columns: int = 2,
+        loc: str = 'outside upper center') -> mpl.legend.Legend:
     """
     Plots a legend across the top of the plot
 
@@ -27,40 +32,42 @@ def _legend(labels: list | ndarray, columns: int = 2) -> matplotlib.legend.Legen
     ----------
     labels : list | ndarray
         Legend matplotlib handles and labels as an array to be unpacked into handles and labels
+    fig : Figure
+        Figure to add legend to
     columns : integer, default = 2
         Number of columns for the legend
+    loc : string, default = 'outside upper center'
+        Location to place the legend
 
     Returns
     -------
     Legend
         Legend object
     """
-    legend = plt.figlegend(
+    legend = fig.legend(
         *labels,
-        loc='lower center',
+        loc=loc,
         ncol=columns,
-        bbox_to_anchor=(0.5, 0.91),
         fontsize=MAJOR,
+        borderaxespad=0.2,
     )
-    legend.get_frame().set_alpha(None)
 
-    for handle in legend.legendHandles:
-        if isinstance(handle, matplotlib.collections.PathCollection):
+    for handle in legend.legend_handles:
+        handle.set_alpha(1)
+
+        if isinstance(handle, mpl.collections.PathCollection):
             handle.set_sizes([100])
 
     return legend
 
 
-def _initialize_plot(
+def _init_plot(
         subplots: str | tuple[int, int] | list | ndarray,
-        legend: bool = False,
-        subplot_titles: bool = False,
         x_label: str = None,
         y_label: str = None,
-        plot_kwargs: dict = None,
-        gridspec_kw: dict = None) -> dict | ndarray:
+        **kwargs) -> tuple[Figure, dict | ndarray]:
     """
-    Initializes subplots using either mosaic or subplots
+    Initialises subplots using either mosaic or subplots
 
     Parameters
     ----------
@@ -69,83 +76,41 @@ def _initialize_plot(
         and subplots will use tuple
     legend : boolean, default = False,
         If the figure will have a legend at the top, then space will be made
-    subplot_titles : bool, default = False,
-        If each subplot has a title
     x_label : string, default = None
         X label for the plot
     y_label : string, default = None
         Y label for the plot
-    plot_kwargs : dict, default = None
-        Optional arguments for the subplot or mosaic function, excluding gridspec_kw
-    gridspec_kw : dict, default = None
-        Gridspec arguments for the subplot or mosaic function
+    **kwargs
+        Optional arguments for the subplot or mosaic function
 
     Returns
     -------
-    dictionary | ndarray
-        Subplot axes
+    tuple[Figure, dictionary | ndarray]
+        Figure and subplot axes
     """
-    text_offset = 0.03
-    gridspec = {
-        'top': 0.95,
-        'bottom': 0.05,
-        'left': 0.06,
-        'right': 0.99,
-        'hspace': 0.05,
-        'wspace': 0.75,
-    }
-
-    if not plot_kwargs:
-        plot_kwargs = {}
-
-    # Gridspec commands for optional layouts
-    if legend:
-        gridspec['top'] -= text_offset
-
-    if subplot_titles:
-        gridspec['hspace'] += 0.2
-        gridspec['top'] -= text_offset
-
-    if x_label:
-        gridspec['bottom'] += text_offset
-
-    if y_label:
-        gridspec['left'] += text_offset
-
-    if gridspec_kw:
-        gridspec = gridspec | gridspec_kw
-
     # Plots either subplot or mosaic
     if isinstance(subplots, tuple):
-        _, axes = plt.subplots(
+        fig, axes = plt.subplots(
             *subplots,
             figsize=FIG_SIZE,
-            gridspec_kw=gridspec,
-            **plot_kwargs,
+            constrained_layout=True,
+            **kwargs,
         )
     else:
-        _, axes = plt.subplot_mosaic(
+        fig, axes = plt.subplot_mosaic(
             subplots,
             figsize=FIG_SIZE,
-            gridspec_kw=gridspec,
-            **plot_kwargs,
+            layout='constrained',
+            **kwargs,
         )
 
     if x_label:
-        plt.figtext(0.5, 0.02, x_label, ha='center', va='center', fontsize=MAJOR)
+        fig.supxlabel(x_label, fontsize=MAJOR)
 
     if y_label:
-        plt.figtext(
-            0.02,
-            0.5,
-            y_label,
-            ha='center',
-            va='center',
-            rotation='vertical',
-            fontsize=MAJOR,
-        )
+        fig.supylabel(y_label, fontsize=MAJOR)
 
-    return axes
+    return fig, axes
 
 
 def _plot_loss(train_loss: list, val_loss: list):
@@ -169,7 +134,7 @@ def _plot_loss(train_loss: list, val_loss: list):
     plt.ylabel('Loss', fontsize=MINOR)
     plt.yscale('log')
     plt.text(
-        0.8, 0.75,
+        0.7, 0.75,
         f'Final loss: {val_loss[-1]:.3e}',
         fontsize=MINOR,
         transform=plt.gca().transAxes
@@ -222,7 +187,7 @@ def _plot_reconstruction(
 
 def _plot_reconstructions(
         spectra: ndarray,
-        outputs: ndarray) -> tuple[list[plt.Axes], ndarray, matplotlib.legend.Legend]:
+        outputs: ndarray) -> tuple[list[plt.Axes], ndarray, Figure, mpl.legend.Legend]:
     """
     Plots reconstructions and residuals for 4 spectra
 
@@ -235,21 +200,20 @@ def _plot_reconstructions(
 
     Returns
     -------
-    tuple[list[Axes], ndarray, Legend]
-        Major axes, minor axes and legend
+    tuple[list[Axes], ndarray, Figure, Legend]
+        Major axes, minor axes, figure, and legend
     """
     major_axes = []
     x_data = load_x_data(spectra.shape[-1])
 
     # Initialize reconstructions plots
-    axes = _initialize_plot(
+    fig, axes = _init_plot(
         (2, 2),
-        legend=True,
         x_label='Energy (keV)',
         y_label='Scaled Log Counts',
-        plot_kwargs={'sharex': 'col'},
-        gridspec_kw={'wspace': 0.2}
-    ).flatten()
+        sharex='col',
+    )
+    axes = axes.flatten()
 
     # Plot reconstructions
     for spectrum, output, axis in zip(spectra, outputs, axes):
@@ -259,9 +223,9 @@ def _plot_reconstructions(
         major_axes[0].get_legend_handles_labels(),
         axis.get_legend_handles_labels()),
     )
-    legend = _legend(labels, columns=3)
+    legend = _legend(labels, fig, columns=3)
 
-    return major_axes, axes, legend
+    return major_axes, axes, fig, legend
 
 
 def _plot_histogram(
@@ -347,7 +311,7 @@ def plot_saliency(plots_dir: str, spectra: ndarray, predictions: ndarray, salien
     saliencies = np.mean(saliencies.reshape(saliencies.shape[0], -1, bins), axis=-1)
 
     # Initialize saliency plots
-    major_axes, minor_axes, legend = _plot_reconstructions(spectra, predictions)
+    major_axes, minor_axes, fig, legend = _plot_reconstructions(spectra, predictions)
     legend.remove()
 
     for axis, saliency in zip(major_axes, saliencies):
@@ -360,8 +324,8 @@ def plot_saliency(plots_dir: str, spectra: ndarray, predictions: ndarray, salien
         twin_axis.get_legend_handles_labels(),
         minor_axes[0].get_legend_handles_labels()),
     )
-    _legend(labels, columns=4)
-    plt.savefig(f'{plots_dir}Saliency_Plot.png', transparent=False)
+    _legend(labels, fig, columns=4)
+    plt.savefig(f'{plots_dir}Saliency_Plot.png')
 
 
 def plot_param_pairs(
@@ -396,14 +360,7 @@ def plot_param_pairs(
         params = [np.swapaxes(params, 0, 1)]
 
     # Initialize pair plots
-    axes = _initialize_plot(
-        (params[0].shape[0],) * 2,
-        legend=labels[0],
-        x_label=' ',
-        y_label=' ',
-        plot_kwargs={'sharex': 'col'},
-        gridspec_kw={'hspace': 0, 'wspace': 0},
-    )
+    fig, axes = _init_plot((params[0].shape[0],) * 2, sharex='col')
 
     # Loop through each subplot
     for i, (axes_col, *y_param) in enumerate(zip(axes, *params)):
@@ -420,17 +377,6 @@ def plot_param_pairs(
                 axis.sharey(axes_col[1])
             elif i != j:
                 axis.sharey(axes_col[0])
-
-            # Hide ticks for plots that aren't in the first column or bottom row
-            if j == 0 or (j == 1 and i == 0):
-                axis.tick_params(axis='y', labelsize=MINOR)
-            else:
-                axis.tick_params(labelleft=False)
-
-            if i == len(axes_col) - 1:
-                axis.tick_params(axis='x', labelsize=MINOR)
-            else:
-                axis.tick_params(labelbottom=False)
 
             # Convert axis for logged parameters to log scale
             if j in log_params:
@@ -449,7 +395,7 @@ def plot_param_pairs(
             # Plot scatter plots & histograms
             if i == j:
                 twin_axis = _plot_histogram(x_param[0], axis, log=log, data_twin=data_twin)
-                axis.tick_params(labelleft=False, left=False)
+                axis.tick_params(which='both', labelleft=False, left=False)
             elif j < i:
                 axis.scatter(
                     x_param[0][:SCATTER_NUM],
@@ -462,7 +408,7 @@ def plot_param_pairs(
                 axis.remove()
 
             if twin_axis:
-                twin_axis.tick_params(labelright=False, right=False)
+                twin_axis.tick_params(which='both', labelright=False, right=False)
 
             if j < i and len(x_param) > 1:
                 axis.scatter(
@@ -474,32 +420,42 @@ def plot_param_pairs(
                     label=labels[1],
                 )
 
+            # Hide ticks for plots that aren't in the first column or bottom row
+            if j == 0:
+                axis.tick_params(axis='y', labelsize=MINOR)
+            else:
+                axis.tick_params(which='both', left=False, labelleft=False)
+
+            if i == len(axes_col) - 1:
+                axis.tick_params(axis='x', labelsize=MINOR)
+            else:
+                axis.tick_params(which='both', bottom=False)
+
             # Bottom row parameter names
             if i == len(axes_col) - 1:
-                axis.set_xlabel(param_names[j], fontsize=MINOR)
+                axis.set_xlabel(param_names[j], fontsize=MAJOR)
 
             # Left column parameter names
             if j == 0 and i != 0:
-                axis.set_ylabel(param_names[i], fontsize=MINOR)
+                axis.set_ylabel(param_names[i], fontsize=MAJOR)
 
     if labels[0]:
-        _legend(axes[-1, 0].get_legend_handles_labels())
+        _legend(axes[-1, 0].get_legend_handles_labels(), fig, loc='upper center')
 
     plt.savefig(f'{plots_dir}Parameter_Pairs.png')
 
 
-def plot_param_comparison(param_names: list[str], config: dict):
+def plot_param_comparison(config: dict):
     """
     Plots prediction against target for each parameter
 
     Parameters:
     ----------
-    param_names : list[string]
-        List of parameter names
     config: dictionary
         Configuration dictionary
     """
     log_params = config['model']['log-parameters']
+    param_names = config['model']['parameter-names']
     plots_dir = config['output']['plots-directory']
 
     target, prediction = param_comparison((
@@ -508,7 +464,7 @@ def plot_param_comparison(param_names: list[str], config: dict):
     ))
     colours = np.array(['blue'] * SCATTER_NUM, dtype=object)
 
-    axes = _initialize_plot(subplot_grid(len(param_names)), legend=True, subplot_titles=True)
+    fig, axes = _init_plot(subplot_grid(len(param_names)))
 
     # Highlight parameters that are maximally or minimally constrained
     for target_param in target[:, :SCATTER_NUM]:
@@ -537,10 +493,10 @@ def plot_param_comparison(param_names: list[str], config: dict):
             axis.set_yscale('log')
 
     _legend([[
-        plt.scatter([], [], color='blue', label='Unconstrained'),
+        plt.scatter([], [], color='blue'),
         plt.scatter([], [], color='red'),
-    ], ['Unconstrained', 'Constrained']])
-    plt.savefig(f'{plots_dir}Parameter_Comparison.png', transparent=False)
+    ], ['Free', 'Pegged']], fig)
+    plt.savefig(f'{plots_dir}Parameter_Comparison.png')
 
 
 def plot_param_distribution(
@@ -570,12 +526,7 @@ def plot_param_distribution(
     param_names = config['model']['parameter-names']
     plots_dir = config['output']['plots-directory']
 
-    if y_axis:
-        gridspec_kw = {'bottom': 0.1, 'right': 0.95, 'hspace': 0.25}
-    else:
-        gridspec_kw = {'bottom': 0.1, 'left': 0.01, 'hspace': 0.25}
-
-    axes = _initialize_plot(subplot_grid(len(param_names)), legend=True, gridspec_kw=gridspec_kw)
+    fig, axes = _init_plot(subplot_grid(len(param_names)))
 
     for data_path in data_paths:
         params.append(np.swapaxes(load_params(data_path)[1], 0, 1))
@@ -609,7 +560,7 @@ def plot_param_distribution(
         labels = axes[0].get_legend_handles_labels()
 
     if labels is not None:
-        _legend(labels)
+        _legend(labels, fig)
 
     plt.savefig(plots_dir + name)
 
@@ -630,12 +581,13 @@ def plot_linear_weights(config: dict, network: Network):
     param_names = config['model']['parameter-names']
     weights = linear_weights(network)
 
-    axes = _initialize_plot('AABBCC;DDDEEE', x_label='Energy (keV)', gridspec_kw={'hspace': 0.2})
+    _, axes = _init_plot('AABBCC;DDDEEE', x_label='Energy (keV)')
 
     for title, weight, axis in zip(param_names, weights, axes.values()):
         axis.scatter(load_x_data(weight.size), weight)
         axis.set_title(title, fontsize=MAJOR)
         axis.tick_params(labelsize=MINOR)
+        axis.set_yticks([])
 
     plt.savefig(f'{plots_dir}Linear_Weights_Mappings.png')
 
@@ -693,7 +645,7 @@ def plot_pgstat_iterations(loss_files: list[str], names: list[str], config: dict
         data = np.loadtxt(loss_file, delimiter=',', dtype=str)
         losses.append(np.median(data[:, num_params + 1:].astype(float), axis=0))
 
-    plt.figure(figsize=(16, 9), constrained_layout=True)
+    fig = plt.figure(figsize=(16, 9), constrained_layout=True)
 
     for name, loss in zip(names, losses):
         plt.plot(np.arange(loss.size) * step + step, loss, label=name)
@@ -703,7 +655,7 @@ def plot_pgstat_iterations(loss_files: list[str], names: list[str], config: dict
     plt.xticks(fontsize=MINOR)
     plt.yticks(fontsize=MINOR)
     plt.yscale('log')
-    _legend(plt.gca().get_legend_handles_labels())
+    _legend(plt.gca().get_legend_handles_labels(), fig)
     plt.savefig(f'{plots_dir}Iteration_Median_PGStat.png')
 
 
@@ -733,11 +685,11 @@ def plot_training(
     # Plot reconstructions if output is spectra reconstructions
     if spectra.shape[1] == outputs.shape[1]:
         _plot_reconstructions(spectra, outputs)
-        plt.savefig(f'{plots_dir}{prefix}_Reconstructions.png', transparent=False)
+        plt.savefig(f'{plots_dir}{prefix}_Reconstructions.png')
 
     # Plot loss over epochs
     _plot_loss(losses[0], losses[1])
-    plt.savefig(f'{plots_dir}{prefix}_Loss.png', transparent=False)
+    plt.savefig(f'{plots_dir}{prefix}_Loss.png')
 
 
 def plot_difference(

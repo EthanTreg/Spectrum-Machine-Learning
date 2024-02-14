@@ -98,6 +98,8 @@ class SpectrumDataset(Dataset):
 
         if 'param_uncertainty' in data:
             self.param_uncertainty = np.abs(data['param_uncertainty'])
+        else:
+            self.param_uncertainty = np.ones_like(self.params)
 
         # Transform parameters
         if log_params and 'param_uncertainty' in data:
@@ -270,7 +272,7 @@ def load_params(data_path: str, load_kwargs: dict = None) -> tuple[ndarray, ndar
         if 'names' in data:
             names = np.array(data['names'])
         else:
-            names = np.arange(data['params'].shape[0], dtype=float).astype(str)
+            names = np.arange(len(data['params']), dtype=float).astype(str)
     elif '.csv' in data_path:
         names = data[:, 0]
         params = data[:, 1:].astype(float)

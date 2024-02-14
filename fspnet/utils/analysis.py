@@ -36,7 +36,7 @@ def autoencoder_saliency(
         Original spectra, output, and saliency
     """
     # Constants
-    spectra = next(iter(loader))[0][:8].to(get_device()[1])
+    spectra = next(iter(loader))[1][:8].to(get_device()[1])
 
     # Initialization
     torch.backends.cudnn.enabled = False
@@ -186,7 +186,7 @@ def encoder_pgstats(loss_file: str, spectra_file: str):
     """
     data = np.loadtxt(loss_file, delimiter=',', dtype=str)
     loss_names = data[:, 0]
-    losses = data[:, -1]
+    losses = data[:, -1].astype(float)
 
     data = load_data(spectra_file)
     spectra_names = data['names']
