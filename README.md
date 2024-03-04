@@ -6,7 +6,7 @@ while the decoder reconstructs spectra from spectral parameters.
 
 See the [Wiki](../../wiki) for more information on how to use this repository.
 
-The research paper can be found on the [Arxiv](https://arxiv.org/abs/2310.17249).
+The research paper can be found on [MNRAS](https://doi.org/10.1093/mnras/stae629) or the [Arxiv](https://arxiv.org/abs/2310.17249).
 
 ![Diagram showing the encoder and decoder that make up the autoencoder](./FSP-Net.png)
 
