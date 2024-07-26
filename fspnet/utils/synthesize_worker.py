@@ -152,7 +152,7 @@ def _generate_synth(
     """
     # Constants
     bias = config['synthesize']['flat-distribution-bias']
-    params_num = config['model']['parameters-number']
+    params_num = config['model']['parameter-number']
     log_params = config['model']['log-parameters']
     param_limits = config['model']['parameter-limits']
     params = config['model']['fixed-parameters'].copy()
@@ -160,7 +160,7 @@ def _generate_synth(
 
     # Get free parameter indices
     param_indices = np.arange(params_num + fixed_num) + 1
-    param_indices = np.setdiff1d(param_indices, list(params.keys())).tolist()
+    param_indices = np.setdiff1d(param_indices, list(params)).tolist()
 
     if synth_params:
         synth_params = np.swapaxes(synth_params, 1, 0)

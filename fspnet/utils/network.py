@@ -83,7 +83,7 @@ class Network(nn.Module):
             f'{config_dir}{name}.json',
         )
 
-        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate, weight_decay=1e-5)
+        self.optimizer = optim.AdamW(self.parameters(), lr=learning_rate)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer,
             factor=0.5,

@@ -25,6 +25,7 @@ def main(config_path: str = '../config.yaml'):
 
     # Variables
     cpus = config['synthesize']['cpus']
+    python = config['synthesize']['python-path']
     names_path = config['data']['names-path']
     synth_path = config['output']['synthetic-path']
     worker_dir = config['output']['worker-directory']
@@ -43,6 +44,11 @@ def main(config_path: str = '../config.yaml'):
     }
 
     cpus = check_cpus(cpus)
+
+    if len(config['model']['parameter-limits']) != config['model']['parameter-number']:
+        raise ValueError(f'Incorrect number of parameter limits, number of free parameters should '
+                         f"be {config['model']['parameter-number']}, but got "
+                         f"{len(config['model']['parameter-limits'])} limits")
 
     if not os.path.exists(worker_dir):
         os.mkdir(worker_dir)
@@ -87,6 +93,7 @@ def main(config_path: str = '../config.yaml'):
         cpus,
         worker_data['synth_num_total'],
         f'fspnet.utils.synthesize_worker {worker_dir}',
+        python_path=python,
     )
 
     print('\nGeneration complete, merging worker data...')

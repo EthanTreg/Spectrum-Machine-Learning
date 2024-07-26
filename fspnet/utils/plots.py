@@ -221,7 +221,7 @@ def _plot_reconstructions(
 
     labels = np.hstack((
         major_axes[0].get_legend_handles_labels(),
-        axis.get_legend_handles_labels()),
+        axes[-1].get_legend_handles_labels()),
     )
     legend = _legend(labels, fig, columns=3)
 
@@ -320,7 +320,7 @@ def plot_saliency(plots_dir: str, spectra: ndarray, predictions: ndarray, salien
         twin_axis.tick_params(right=False, labelright=False)
 
     labels = np.hstack((
-        axis.get_legend_handles_labels(),
+        axes[-1].get_legend_handles_labels(),
         twin_axis.get_legend_handles_labels(),
         minor_axes[0].get_legend_handles_labels()),
     )
@@ -581,7 +581,7 @@ def plot_linear_weights(config: dict, network: Network):
     param_names = config['model']['parameter-names']
     weights = linear_weights(network)
 
-    _, axes = _init_plot('AABBCC;DDDEEE', x_label='Energy (keV)')
+    _, axes = _init_plot(subplot_grid(len(param_names)), x_label='Energy (keV)')
 
     for title, weight, axis in zip(param_names, weights, axes.values()):
         axis.scatter(load_x_data(weight.size), weight)

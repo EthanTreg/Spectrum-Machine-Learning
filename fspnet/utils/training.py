@@ -18,7 +18,8 @@ def pyxspec_test(
         worker_dir: str,
         params: str | tuple[np.ndarray, np.ndarray],
         cpus: int = 1,
-        job_name: str = None):
+        job_name: str | None = None,
+        python_path: str = 'python3'):
     """
     Calculates the PGStat loss using PyXspec
     Done using multiprocessing if > 2 cores available
@@ -33,6 +34,8 @@ def pyxspec_test(
         Number of threads to use, 0 will use all available
     job_name : string, default = None
         If not None, file name to save the output to
+    python_path : str, default = python3
+        Path to the python executable if using virtual environments
     """
     # Initialize variables
     data = []
@@ -54,7 +57,12 @@ def pyxspec_test(
         np.savetxt(f'{worker_dir}worker_{i}_job.csv', job, delimiter=',', fmt='%s')
 
     # Run workers to calculate PGStat
-    mpi_multiprocessing(cpus, len(names), f'fspnet.utils.pyxspec_worker {worker_dir}')
+    mpi_multiprocessing(
+        cpus,
+        len(names),
+        f'fspnet.utils.pyxspec_worker {worker_dir}',
+        python_path=python_path,
+    )
 
     # Retrieve worker outputs
     for i in range(cpus):

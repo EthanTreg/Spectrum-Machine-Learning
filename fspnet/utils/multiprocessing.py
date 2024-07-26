@@ -10,7 +10,7 @@ from time import time
 from fspnet.utils.utils import progress_bar
 
 
-def mpi_multiprocessing(cpus: int, total: int, arg: str):
+def mpi_multiprocessing(cpus: int, total: int, arg: str, python_path: str = 'python3'):
     """
     Creates and tracks multiple workers running a Python module using MPI,
     tracking is done through the worker print statement 'update'
@@ -21,12 +21,14 @@ def mpi_multiprocessing(cpus: int, total: int, arg: str):
 
     Parameters
     ----------
-    cpus : integer
+    cpus : str
         Number of threads to use
-    total : integer
-        Total number of
-    arg : string
+    total : str
+        Total number of tasks
+    arg : str
         Python module argument after python3 -m
+    python_path : str, default = python3
+        Path to the python executable if using virtual environments
     """
     failure_total = count = 0
     initial_time = time()
@@ -34,13 +36,13 @@ def mpi_multiprocessing(cpus: int, total: int, arg: str):
 
     # Start workers
     if cpus == 1:
-        subprocess.run(f'python3 -m {arg}'.split(), check=True)
+        subprocess.run(f'{python_path} -m {arg}'.split(), check=True)
         return
 
     print(f'Starting {cpus} workers...')
     with subprocess.Popen(
             f'mpiexec -n {cpus} --use-hwthread-cpus '
-            f'python3 -m {arg}'.split(),
+            f'{python_path} -m {arg}'.split(),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
     ) as proc:
@@ -74,12 +76,12 @@ def check_cpus(cpus: int) -> int:
 
     Parameters
     ----------
-    cpus : integer
+    cpus : str
         Number of threads to check
 
     Returns
     -------
-    integer
+    str
         Number of threads
     """
     if cpus < 1 or cpus > os.cpu_count():

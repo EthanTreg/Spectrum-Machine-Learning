@@ -8,7 +8,6 @@ from time import time
 
 import torch
 import numpy as np
-import matplotlib as mpl
 from torch.utils.data import DataLoader
 
 from fspnet.utils import plots
@@ -32,6 +31,7 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
     """
     # Initialize variables
     cpus = config['training']['cpus']
+    python = config['training']['python-path']
     default_params = config['model']['default-parameters']
     log_params = config['model']['log-parameters']
     predictions_path = config['output']['parameter-predictions-path']
@@ -66,15 +66,27 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
 
     # Encoder validation performance
     print('\nTesting Encoder...')
-    pyxspec_test(worker_dir, predictions_path, cpus=cpus, job_name='Encoder_output')
+    pyxspec_test(
+        worker_dir,
+        predictions_path,
+        cpus=cpus,
+        job_name='Encoder_output',
+        python_path=python,
+    )
 
     # Xspec performance
     print('\nTesting Xspec...')
-    pyxspec_test(worker_dir, (names, xspec_params), cpus=cpus, job_name='Xspec_output')
+    pyxspec_test(
+        worker_dir,
+        (names, xspec_params),
+        cpus=cpus,
+        job_name='Xspec_output',
+        python_path=python,
+    )
 
     # Default performance
     print('\nTesting Defaults...')
-    pyxspec_test(worker_dir, (names, default_params), cpus=cpus)
+    pyxspec_test(worker_dir, (names, default_params), cpus=cpus, python_path=python)
 
     # Allow Xspec optimization
     worker_data['optimize'] = True
@@ -83,11 +95,23 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
 
     # Encoder + Xspec performance
     print('\nTesting Encoder + Fitting...')
-    pyxspec_test(worker_dir, predictions_path, cpus=cpus, job_name='Encoder_Xspec_output')
+    pyxspec_test(
+        worker_dir,
+        predictions_path,
+        cpus=cpus,
+        job_name='Encoder_Xspec_output',
+        python_path=python,
+    )
 
     # Default + Xspec performance
     print('\nTesting Defaults + Fitting...')
-    pyxspec_test(worker_dir, (names, default_params), cpus=cpus, job_name='Default_Xspec_output')
+    pyxspec_test(
+        worker_dir,
+        (names, default_params),
+        cpus=cpus,
+        job_name='Default_Xspec_output',
+        python_path=python,
+    )
 
 
 def predict_parameters(config: dict | str = '../config.yaml') -> np.ndarray:
@@ -257,9 +281,6 @@ def main(config_path: str = '../config.yaml'):
     states_dir = config['output']['network-states-directory']
     plots_dir = config['output']['plots-directory']
     worker_dir = config['output']['worker-directory']
-
-    # Initialize Matplotlib backend
-    mpl.use('qt5agg')
 
     # Create plots directory
     if not os.path.exists(plots_dir):
