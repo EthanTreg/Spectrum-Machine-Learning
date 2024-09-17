@@ -7,8 +7,8 @@ import xspec
 import numpy as np
 from mpi4py import MPI
 from numpy import ndarray
+from netloader.utils.utils import progress_bar
 
-from fspnet.utils.utils import progress_bar
 from fspnet.utils.workers import initialize_worker, initialize_pyxspec
 
 
@@ -24,8 +24,6 @@ class PyXspecFitting:
         PyXspec model
     fixed_params : ndarray
         Parameter number & value of fixed parameters
-    fix_params_index: ndarray
-        Index to insert fixed parameters into network parameter output
     param_limits : tensor
         Parameter lower & upper limits
 
@@ -185,8 +183,8 @@ class PyXspecFitting:
             xspec.AllData.ignore('0.0-0.3 10.0-**')
 
             # Calculate fit statistic
-            # losses.append(self._fit_statistic(spectrum_params))
-            losses.append(self._iterative_fit(spectrum_params, step=step))
+            losses.append(self._fit_statistic(spectrum_params))
+            # losses.append(self._iterative_fit(spectrum_params, step=step))
 
             xspec.AllData.clear()
 
@@ -229,8 +227,8 @@ def worker():
     os.chdir(data['dirs'][0])
 
     # Save results
-    # job = np.hstack((job, np.expand_dims(losses, axis=1)))
-    job = np.hstack((job, losses))
+    job = np.hstack((job, np.expand_dims(losses, axis=1)))
+    # job = np.hstack((job, losses))
     np.savetxt(f'{worker_dir}worker_{rank}_job.csv', job, delimiter=',', fmt='%s')
 
     print(f'Worker {rank} done')

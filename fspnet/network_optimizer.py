@@ -1,5 +1,7 @@
 """
 Optimizes the hyperparameters of the network using Optuna
+
+WARNING: This code is out of date and needs updating to use PyTorch-Network-Loader
 """
 import os
 import json
@@ -7,12 +9,11 @@ import logging as log
 
 import joblib
 import optuna
+from netloader.network import Network
+from netloader.utils.utils import progress_bar, get_device
 from torch.utils.data import DataLoader
 
-from fspnet.utils.network import Network
-from fspnet.utils.training import train_val
-from fspnet.utils.data import data_initialisation
-from fspnet.utils.utils import progress_bar, open_config, get_device
+from fspnet.utils.utils import open_config
 
 
 def _build_network(config_path: str, filters: list[int], conv_layers: list[int]):

@@ -3,40 +3,115 @@ Main spectral machine learning module
 """
 import os
 import pickle
-import logging as log
-from time import time
+from typing import Any, Self, BinaryIO
 
 import torch
 import numpy as np
+import netloader.networks as nets
+from netloader.network import Network
+from netloader.utils import transforms
+from netloader.utils.utils import save_name, get_device
 from torch.utils.data import DataLoader
+from torch import nn, Tensor
+from numpy import ndarray
 
 from fspnet.utils import plots
-from fspnet.utils.data import data_initialisation
-from fspnet.utils.utils import open_config, get_device
-from fspnet.utils.network import load_network, Network
-from fspnet.utils.training import training, pyxspec_test
-from fspnet.utils.analysis import autoencoder_saliency, decoder_saliency
+from fspnet.utils.utils import open_config
+from fspnet.utils.data import SpectrumDataset, loader_init
+from fspnet.utils.analysis import autoencoder_saliency, decoder_saliency, pyxspec_test
 
 
-def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
+class AutoencoderNet(nn.Module):
+    """
+    Makes an autoencoder architecture from an encoder and decoder
+
+    Attributes
+    ----------
+    name : str
+        Name of the autoencoder
+    checkpoints : list[Tensor]
+        Outputs from each checkpoint
+    net : ModuleList
+        Network construction
+    kl_loss : Tensor, default = 0
+        KL divergence loss on the latent space, if using a sample layer
+
+    Methods
+    -------
+    forward(x) -> Tensor
+        Forward pass of the network
+    to(*args, **kwargs) -> Network
+        Moves and/or casts the parameters and buffers
+    """
+    def __init__(self, encoder: nn.Module, decoder: nn.Module, name: str = 'autoencoder'):
+        """
+        Parameters
+        ----------
+        encoder : Module
+            Encoder network
+        decoder : Module
+            Decoder network
+        name : str, default = 'autoencoder'
+            Name of the network
+        """
+        super().__init__()
+        self.name: str = name
+        self.checkpoints: list[torch.Tensor] = []
+        self.kl_loss: torch.Tensor = torch.tensor(0.)
+        self.net: nn.ModuleList = nn.ModuleList([encoder, decoder])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the autoencoder
+
+        Parameters
+        ----------
+        x : (N,...) list[Tensor] | Tensor
+            Input tensor(s) with batch size N
+
+        Returns
+        -------
+        (N,...) list[Tensor] | Tensor
+            Output tensor from the network
+        """
+        x = self.net[0](x)
+        self.checkpoints.append(x.clone())
+
+        if hasattr(self.net[0], 'kl_loss'):
+            self.kl_loss = self.net[0].kl_loss
+
+        return self.net[1](x)
+
+    def to(self, *args: Any, **kwargs: Any) -> Self:
+        super().to(*args, **kwargs)
+        self.kl_loss = self.kl_loss.to(*args, **kwargs)
+        self.net[0].to(*args, **kwargs)
+        self.net[1].to(*args, **kwargs)
+        return self
+
+
+def pyxspec_tests(config: dict[str, Any], data: dict[str, ndarray]) -> None:
     """
     Tests the PGStats of the different fitting methods using PyXspec
 
     Parameters
     ----------
-    config : dictionary
+    config : dict[str, Any]
         Configuration dictionary
-    dataset : Dataset
-        Validation dataset to test the PGStats for
+    data : dict[str, ndarray]
+        ids : ndarray
+            Files names of the FITS spectra corresponding to the parameters
+        latent : ndarray
+            Parameter predictions
+        targets : ndarray
+            Best fit parameters
     """
     # Initialize variables
-    cpus = config['training']['cpus']
-    python = config['training']['python-path']
-    default_params = config['model']['default-parameters']
-    log_params = config['model']['log-parameters']
-    predictions_path = config['output']['parameter-predictions-path']
-    worker_dir = config['output']['worker-directory']
-    worker_data = {
+    cpus: int = config['training']['cpus']
+    python: str = config['training']['python-path']
+    worker_dir: str = config['output']['worker-directory']
+    default_params: list[float] = config['model']['default-parameters']
+    worker_data: dict[str, Any] = {
         'optimize': False,
         'dirs': [
             os.path.dirname(os.path.abspath(__file__)),
@@ -49,16 +124,7 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
         'custom_model': config['model']['custom-model-name'],
         'model_dir': config['model']['model-directory'],
     }
-    indices = dataset.indices
-    names = dataset.dataset.names[indices]
-    xspec_params = dataset.dataset.params[indices]
-    default_params = np.repeat([default_params], names.size, axis=0)
-
-    # Untransform Xspec parameters
-    xspec_params = xspec_params * dataset.dataset.transform[1][1] + dataset.dataset.transform[1][0]
-
-    if log_params:
-        xspec_params[:, log_params] = 10 ** xspec_params[:, log_params]
+    file: BinaryIO
 
     # Save worker variables
     with open(f'{worker_dir}worker_data.pickle', 'wb') as file:
@@ -68,7 +134,8 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
     print('\nTesting Encoder...')
     pyxspec_test(
         worker_dir,
-        predictions_path,
+        data['ids'],
+        data['latent'],
         cpus=cpus,
         job_name='Encoder_output',
         python_path=python,
@@ -78,7 +145,8 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
     print('\nTesting Xspec...')
     pyxspec_test(
         worker_dir,
-        (names, xspec_params),
+        data['ids'],
+        data['targets'],
         cpus=cpus,
         job_name='Xspec_output',
         python_path=python,
@@ -86,7 +154,13 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
 
     # Default performance
     print('\nTesting Defaults...')
-    pyxspec_test(worker_dir, (names, default_params), cpus=cpus, python_path=python)
+    pyxspec_test(
+        worker_dir,
+        data['ids'],
+        np.repeat([default_params], len(data['ids']), axis=0),
+        cpus=cpus,
+        python_path=python,
+    )
 
     # Allow Xspec optimization
     worker_data['optimize'] = True
@@ -97,7 +171,8 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
     print('\nTesting Encoder + Fitting...')
     pyxspec_test(
         worker_dir,
-        predictions_path,
+        data['ids'],
+        data['latent'],
         cpus=cpus,
         job_name='Encoder_Xspec_output',
         python_path=python,
@@ -107,154 +182,178 @@ def pyxspec_tests(config: dict, dataset: torch.utils.data.Dataset):
     print('\nTesting Defaults + Fitting...')
     pyxspec_test(
         worker_dir,
-        (names, default_params),
+        data['ids'],
+        data['targets'],
         cpus=cpus,
         job_name='Default_Xspec_output',
         python_path=python,
     )
 
 
-def predict_parameters(config: dict | str = '../config.yaml') -> np.ndarray:
+def net_init(
+        datasets: tuple[SpectrumDataset, SpectrumDataset],
+        config: str | dict[str, Any] = '../config.yaml',
+) -> tuple[nets.BaseNetwork, nets.BaseNetwork]:
     """
-    Predicts parameters using the encoder & saves the results to a file
+    Initialises the network
 
     Parameters
     ----------
-    config : dictionary | string, default = '../config.yaml'
-        Configuration dictionary or file path to the configuration file
+    datasets : tuple[SpectrumDataset, SpectrumDataset]
+        Encoder and decoder datasets
+    config : string | dictionary, default = '../config.yaml'
+        Configuration dictionary or path to the configuration dictionary
 
     Returns
     -------
-    ndarray
-        Spectra names and parameter predictions
+    tuple[BaseNetwork, BaseNetwork]
+        Constructed decoder and autoencoder
     """
     if isinstance(config, str):
-        _, config = open_config('spectrum-fit', config)
-
-    if config['training']['encoder-save']:
-        config['training']['encoder-load'] = config['training']['encoder-save']
-
-    (_, loader), encoder = initialization(
-        config['training']['encoder-name'],
-        config,
-    )[2:]
-
-    initial_time = time()
-    output_path = config['output']['parameter-predictions-path']
-    names = []
-    params = []
-    log_params = loader.dataset.dataset.log_params
-    param_transform = loader.dataset.dataset.transform[1]
-
-    encoder.eval()
-
-    # Initialize processes for multiprocessing of encoder loss calculation
-    with torch.no_grad():
-        for names_batch, spectra, *_ in loader:
-            names.extend(names_batch)
-            param_batch = encoder(spectra.to(get_device()[1]))
-            params.append(param_batch)
-
-    params = torch.cat(params).cpu().numpy() * param_transform[1] + param_transform[0]
-
-    if log_params:
-        params[:, log_params] = 10 ** params[:, log_params]
-
-    output = np.hstack((np.expand_dims(names, axis=1), params))
-    print(f'Parameter prediction time: {time() - initial_time:.3e} s')
-    np.savetxt(output_path, output, delimiter=',', fmt='%s')
-
-    return output
-
-
-def initialization(
-        name: str,
-        config: dict | str = '../config.yaml',
-        transform: tuple[tuple[float, float], tuple[np.ndarray, np.ndarray]] = None) -> tuple[
-    int,
-    tuple[list, list],
-    tuple[DataLoader, DataLoader],
-    Network,
-]:
-    """
-    Trains & validates network, used for progressive learning
-
-    Parameters
-    ----------
-    name : string
-        Name of the network
-    config : dictionary | string, default = '../config.yaml'
-        Configuration dictionary or file path to the configuration file
-    transform : tuple[tuple[float, float], tuple[ndarray, ndarray]], default = None
-        Min and max spectral range and mean & standard deviation of parameters
-
-    Returns
-    -------
-    tuple[integer, tuple[list, list], tuple[DataLoader, DataLoader], Network]
-        Initial epoch; train & validation losses; train & validation dataloaders; & network
-    """
-    if isinstance(config, str):
-        _, config = open_config('spectrum-fit', config)
-
-    # Constants
-    initial_epoch = 0
-    losses = ([], [])
-    device = get_device()[1]
-
-    if 'encoder' in name.lower():
-        network_type = 'encoder'
-    elif 'decoder' in name.lower():
-        network_type = 'decoder'
-    else:
-        raise NameError(f'Unknown network type: {name}\n'
-                        f'Make sure encoder or decoder is included in the name')
+        _, config = open_config('main', config)
 
     # Load config parameters
-    load_num = config['training'][f'{network_type}-load']
-    batch_size = config['training']['batch-size']
+    e_save_num = config['training']['encoder-save']
+    e_load_num = config['training']['encoder-load']
+    d_save_num = config['training']['decoder-save']
+    d_load_num = config['training']['decoder-load']
     learning_rate = config['training']['learning-rate']
+    encoder_name = config['training']['encoder-name']
+    decoder_name = config['training']['decoder-name']
+    description = config['training']['network-description']
     networks_dir = config['training']['network-configs-directory']
-    spectra_path = config['data'][f'{network_type}-data-path']
-    num_params = config['model']['parameters-number']
     log_params = config['model']['log-parameters']
     states_dir = config['output']['network-states-directory']
+    device = get_device()[1]
 
-    if load_num:
-        try:
-            state = torch.load(f'{states_dir}{name}_{load_num}.pth', map_location=device)
-            indices = state['indices']
-            transform = state['transform']
-        except FileNotFoundError:
-            log.warning(f'{states_dir}{name}_{load_num}.pth does not exist\n'
-                        f'No state will be loaded')
-            load_num = 0
-            indices = None
+    if d_load_num:
+        decoder = nets.load_net(d_load_num, states_dir, decoder_name)
+        decoder.description = description
+        decoder.save_path = save_name(d_save_num, states_dir, decoder_name)
+        transform = decoder.header['targets']
+        param_transform = decoder.in_transform
     else:
-        indices = None
+        transform = transforms.MultiTransform([
+            transforms.NumpyTensor(),
+            transforms.MinClamp(dim=-1),
+            transforms.Log(),
+        ])
+        transform.transforms.append(transforms.Normalise(
+            transform(datasets[1].spectra),
+            mean=False,
+        ))
+        param_transform = transforms.MultiTransform([
+            transforms.NumpyTensor(),
+            transforms.MinClamp(dim=0, idxs=log_params),
+            transforms.Log(idxs=log_params),
+        ])
+        param_transform.transforms.append(transforms.Normalise(
+            param_transform(datasets[1].params),
+            dim=0,
+        ))
+        decoder = Network(
+            decoder_name,
+            networks_dir,
+            list(datasets[1][0][1].shape),
+            list(datasets[1][0][2].shape),
+        )
+        decoder = nets.Decoder(
+            d_save_num,
+            states_dir,
+            decoder,
+            learning_rate=learning_rate,
+            description=description,
+            verbose='epoch',
+            transform=transform,
+        )
+        decoder.in_transform = param_transform
 
-    # Initialize datasets
-    loaders = data_initialisation(
-        spectra_path,
-        log_params,
-        batch_size=batch_size,
-        transform=transform,
-        indices=indices,
-    )
+    if e_load_num:
+        net = nets.load_net(e_load_num, states_dir, encoder_name)
+        net.description = description
+        net.save_path = save_name(e_save_num, states_dir, encoder_name)
+    else:
+        net = Network(
+            encoder_name,
+            networks_dir,
+            list(datasets[0][0][2].shape),
+            list(datasets[0][0][1].shape),
+        )
+        net = nets.Autoencoder(
+            e_save_num,
+            states_dir,
+            AutoencoderNet(net, decoder.net, name=encoder_name),
+            learning_rate=learning_rate,
+            description=description,
+            verbose='epoch',
+            transform=transform,
+            latent_transform=param_transform,
+        )
+        net.bound_loss = 0
+        net.kl_loss = 0
+        # net = nets.Encoder(
+        #     e_save_num,
+        #     states_dir,
+        #     net,
+        #     learning_rate=learning_rate,
+        #     description=description,
+        #     transform=param_transform,
+        # )
+        # net.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #     net.optimiser,
+        #     factor=0.5,
+        #     min_lr=1e-5,
+        # )
+        # net._loss_function = encoder_loss
 
-    # Initialize network
-    network = Network(
-        loaders[0].dataset[0][1].size(0),
-        num_params,
-        learning_rate,
-        name,
-        networks_dir,
-    ).to(device)
+    for dataset in datasets:
+        dataset.spectra, dataset.uncertainty = transform(
+            dataset.spectra,
+            uncertainty=dataset.uncertainty,
+        )
+        dataset.params = param_transform(dataset.params)
+    return decoder.to(device), net.to(device)
 
-    # Load states from previous training
-    if load_num:
-        initial_epoch, network, losses = load_network(load_num, states_dir, network)
 
-    return initial_epoch, losses, loaders, network
+def init(config: dict | str = '../config.yaml') -> tuple[
+        tuple[DataLoader, DataLoader],
+        tuple[DataLoader, DataLoader],
+        nets.BaseNetwork,
+        nets.BaseNetwork]:
+    """
+    Initialises the network and dataloaders
+
+    Parameters
+    ----------
+    config : dictionary | string, default = '../config.yaml'
+        Configuration dictionary or path to the configuration dictionary
+
+    Returns
+    -------
+    tuple[tuple[Dataloader, Dataloader], tuple[Dataloader, Dataloader], BaseNetwork, BaseNetwork]
+        Train & validation dataloaders for decoder and autoencoder, decoder, and autoencoder
+    """
+    if isinstance(config, str):
+        _, config = open_config('main', config)
+
+    # Load config parameters
+    batch_size = config['training']['batch-size']
+    val_frac = config['training']['validation-fraction']
+    e_data_path = config['data']['encoder-data-path']
+    d_data_path = config['data']['decoder-data-path']
+    log_params = config['model']['log-parameters']
+
+    # Fetch dataset & network
+    e_dataset = SpectrumDataset(e_data_path, log_params)
+    d_dataset = SpectrumDataset(d_data_path, log_params)
+    decoder, net = net_init((e_dataset, d_dataset), config)
+
+    # Initialise datasets
+    e_loaders = loader_init(e_dataset, batch_size=batch_size, val_frac=val_frac, idxs=net.idxs)
+    d_loaders = loader_init(d_dataset, batch_size=batch_size, val_frac=val_frac, idxs=decoder.idxs)
+    net.idxs = e_dataset.idxs
+    decoder.idxs = d_dataset.idxs
+    return e_loaders, d_loaders, decoder, net
 
 
 def main(config_path: str = '../config.yaml'):
@@ -272,9 +371,9 @@ def main(config_path: str = '../config.yaml'):
     tests = config['training']['tests']
     num_epochs = config['training']['epochs']
 
-    # Data paths
-    e_data_path = config['data']['encoder-data-path']
-    d_data_path = config['data']['decoder-data-path']
+    # Model variables
+    log_params = config['model']['log-parameters']
+    param_names = config['model']['parameter-names']
 
     # Output paths
     predictions_path = config['output']['parameter-predictions-path']
@@ -295,81 +394,87 @@ def main(config_path: str = '../config.yaml'):
         os.makedirs(states_dir)
 
     # Initialize data & decoder
-    d_initial_epoch, d_losses, d_loaders, decoder = initialization(
-        config['training']['decoder-name'],
-        config=config,
-    )
-
-    # Initialize data & encoder
-    e_initial_epoch, e_losses, e_loaders, encoder = initialization(
-        config['training']['encoder-name'],
-        config=config,
-        transform=d_loaders[0].dataset.dataset.transform,
-    )
+    e_loaders, d_loaders, decoder, net = init(config)
 
     # Train decoder
-    decoder_return = training(
-        (d_initial_epoch, num_epochs),
-        d_loaders,
-        decoder,
-        save_num=config['training']['decoder-save'],
-        states_dir=states_dir,
-        losses=d_losses,
+    decoder.training(num_epochs, d_loaders)
+    plots.plot_performance(
+        'Loss',
+        decoder.losses[1],
+        plots_dir=f'{plots_dir}Decoder_',
+        train=decoder.losses[0],
     )
-    plots.plot_training('Decoder', plots_dir, *decoder_return)
+    data = decoder.predict(d_loaders[-1])
+    plots.plot_reconstructions(
+        data['targets'][:, 0],
+        data['preds'],
+        plots_dir=f'{plots_dir}Decoder_',
+    )
 
-    # Train encoder
-    encoder_return = training(
-        (e_initial_epoch, num_epochs),
-        e_loaders,
-        encoder,
-        save_num=config['training']['encoder-save'],
-        states_dir=states_dir,
-        losses=e_losses,
-        surrogate=decoder,
+    net.net.net[1].requires_grad_(False)
+    net.training(num_epochs, e_loaders)
+    plots.plot_performance(
+        'Loss',
+        net.losses[1],
+        plots_dir=f'{plots_dir}Autoencoder_',
+        train=net.losses[0],
     )
-    plots.plot_training('Autoencoder', plots_dir, *encoder_return)
+    data = net.predict(e_loaders[0])
+    plots.plot_reconstructions(
+        data['inputs'][:, 0],
+        data['preds'],
+        plots_dir=f'{plots_dir}Autoencoder_',
+    )
 
     # Plot linear weight mappings
-    plots.plot_linear_weights(config, decoder)
-    plots.plot_encoder_pgstats(f'{plots_dir}{worker_dir}Encoder_Xspec_output.csv', config)
-    plots.plot_pgstat_iterations(
-        [f'{worker_dir}Encoder_Xspec_output_60.csv',
-         f'{worker_dir}Default_Xspec_output_60.csv'],
-        ['Encoder', 'Defaults'],
-        config,
-    )
+    plots.plot_linear_weights(param_names, net.net, plots_dir=plots_dir)
+
+    # WARNING: Not updated yet to use PyTorch-Network-Loader
+    # plots.plot_encoder_pgstats(f'{plots_dir}{worker_dir}Encoder_Xspec_output.csv', config)
+    # plots.plot_pgstat_iterations(
+    #     [f'{worker_dir}Encoder_Xspec_output_60.csv',
+    #      f'{worker_dir}Default_Xspec_output_60.csv'],
+    #     ['Encoder', 'Defaults'],
+    #     config,
+    # )
 
     # Generate parameter predictions
-    predict_parameters(config=config)
-    plots.plot_param_comparison(config)
-    plots.plot_param_distribution(
-        'Decoder_Param_Distribution',
-        [d_data_path, predictions_path],
-        config,
-        y_axis=False,
-        labels=['Target', 'Prediction'],
+    plots.plot_param_comparison(
+        log_params,
+        param_names,
+        data['targets'],
+        data['latent'],
+        # data['preds'],
+        plots_dir=plots_dir,
     )
-    plots.plot_param_distribution(
-        'Encoder_Param_Distribution',
-        [e_data_path, predictions_path],
-        config,
+    plots.plot_multi_plot(
+        ['Target', 'Prediction'],
+        [data['targets'], data['latent']],
+        # [data['targets'], data['preds']],
+        plots.plot_param_distribution,
+        plots_dir=f'{plots_dir}Param_Distribution_',
         y_axis=False,
-        labels=['Target', 'Prediction'],
+        log_params=log_params,
+        param_names=param_names,
     )
-    plots.plot_param_pairs(
-        (e_data_path, predictions_path),
-        config,
-        labels=('Targets', 'Predictions'),
+    plots.plot_multi_plot(
+        ['Targets', 'Predictions'],
+        [data['targets'], data['latent']],
+        # [data['targets'], data['preds']],
+        plots.plot_param_pairs,
+        plots_dir=f'{plots_dir}Pair_Plot_',
+        log_params=log_params,
+        param_names=param_names,
     )
 
     # Calculate saliencies
-    decoder_saliency(d_loaders[1], decoder)
-    saliency_output = autoencoder_saliency(e_loaders[1], encoder, decoder)
-    plots.plot_saliency(plots_dir, *saliency_output)
+    # WARNING: Not updated yet to use PyTorch-Network-Loader
+    # decoder_saliency(d_loaders[1], decoder)
+    # saliency_output = autoencoder_saliency(e_loaders[1], encoder, decoder)
+    # plots.plot_saliency(plots_dir, *saliency_output)
 
     if tests:
-        pyxspec_tests(config, e_loaders[1].dataset)
+        pyxspec_tests(config, data)
 
 
 if __name__ == '__main__':

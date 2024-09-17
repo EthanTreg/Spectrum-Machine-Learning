@@ -7,10 +7,11 @@ from time import time
 
 import numpy as np
 from numpy import ndarray
+from netloader.utils.utils import progress_bar
 
 from fspnet.utils.multiprocessing import check_cpus
+from fspnet.utils.utils import file_names, open_config
 from fspnet.utils.preprocessing import correct_spectrum_file
-from fspnet.utils.utils import progress_bar, file_names, open_config
 
 
 def _worker(
@@ -20,7 +21,7 @@ def _worker(
         counter: mp.Value,
         queue: mp.Queue,
         background_dir: str = '',
-        cut_off: list = None):
+        cut_off: tuple[float, float] | None = None):
     """
     Worker used to parallelize spectrum_data
 
@@ -38,7 +39,7 @@ def _worker(
         Multiprocessing queue to add spectra to
     background_dir : string, default = ''
         Path to the root directory where the background is located
-    cut_off : list, default = [0.3, 10]
+    cut_off : list, default = (0.3, 10)
         Range of accepted data in keV
     """
     spectra = []

@@ -6,11 +6,11 @@ import re
 import torch
 import numpy as np
 from numpy import ndarray
+from netloader.network import Network
+from netloader.utils.utils import get_device
 from torch.utils.data import DataLoader
 
-from fspnet.utils.network import Network
-from fspnet.utils.utils import get_device, name_sort
-from fspnet.utils.data import load_params, load_data
+from fspnet.utils.multiprocessing import check_cpus, mpi_multiprocessing
 
 
 def autoencoder_saliency(
@@ -100,35 +100,7 @@ def decoder_saliency(loader: DataLoader, decoder: Network):
     )
 
 
-def param_comparison(data_paths: tuple[str, str]) -> tuple[ndarray, ndarray]:
-    """
-    Gets and transforms data to compare parameter values
-
-    Parameters
-    ----------
-    data_paths : tuple[string, string]
-        Paths to the parameters to compare
-
-    Returns
-    -------
-    tuple[ndarray, ndarray]
-        Target parameters and parameter predictions
-    """
-    names = []
-    params = []
-
-    # Load config parameters
-    for data_path in data_paths:
-        returns = load_params(data_path, load_kwargs={'dtype': str})
-        names.append(returns[0])
-        params.append(returns[1])
-
-    names, params = name_sort(names, params)
-
-    return np.swapaxes(params[0], 0, 1), np.swapaxes(params[1], 0, 1)
-
-
-def linear_weights(network: Network) -> ndarray:
+def linear_weights(net: Network) -> ndarray:
     """
     Returns the mapping of all linear weights from the input to the output
 
@@ -141,7 +113,7 @@ def linear_weights(network: Network) -> ndarray:
 
     Parameters
     ----------
-    network : Network
+    net : Network
         Network to learn the mapping for
 
     Returns
@@ -153,8 +125,8 @@ def linear_weights(network: Network) -> ndarray:
     param_weights = []
 
     # Get all linear weights in the network
-    for name, param in network.named_parameters():
-        if re.search(r'.*linear_\d+.weight', name):
+    for name, param in net.named_parameters():
+        if re.search(r'.*linear.weight', name):
             weights.append(param.detach().cpu().numpy())
 
     # Calculate weight mapping for each input parameter
@@ -172,29 +144,68 @@ def linear_weights(network: Network) -> ndarray:
     return np.array(param_weights)
 
 
-def encoder_pgstats(loss_file: str, spectra_file: str):
+def pyxspec_test(
+        worker_dir: str,
+        names: ndarray,
+        params: ndarray,
+        cpus: int = 1,
+        job_name: str | None = None,
+        python_path: str = 'python3') -> None:
     """
-    Gets the data and sorts it for comparing the encoder PGStats against
-    the maximum of the corresponding spectrum
+    Calculates the PGStat loss using PyXspec
+    Done using multiprocessing if > 2 cores available
 
     Parameters
     ----------
-    loss_file : string
-        Path to the file that contains the PGStats for each spectrum
-    spectra_file : string
-        Path to the spectra with
+    worker_dir : str
+        Directory to where to save worker data
+    names : ndarray
+        Files names of the FITS spectra corresponding to the parameters
+    params : ndarray
+        Parameter predictions
+    cpus : int, default = 1
+        Number of threads to use, 0 will use all available
+    job_name : str, default = None
+        If not None, file name to save the output to
+    python_path : str, default = python3
+        Path to the python executable if using virtual environments
     """
-    data = np.loadtxt(loss_file, delimiter=',', dtype=str)
-    loss_names = data[:, 0]
-    losses = data[:, -1].astype(float)
+    i: int
+    data: list[ndarray] = []
+    worker_names: list[ndarray]
+    worker_params: list[ndarray]
+    job: ndarray
+    data_: ndarray
+    names_batch: ndarray
+    params_batch: ndarray
 
-    data = load_data(spectra_file)
-    spectra_names = data['names']
-    spectra_max = np.max(data['spectra'], axis=1)
+    # Divide work between workers
+    cpus = check_cpus(cpus)
+    worker_names = np.array_split(names, cpus)
+    worker_params = np.array_split(params, cpus)
 
-    _, (losses, spectra_max) = name_sort(
-        [loss_names, spectra_names],
-        [losses, spectra_max],
+    # Save data to file for each worker
+    for i, (names_batch, params_batch) in enumerate(zip(worker_names, worker_params)):
+        job = np.hstack((np.expand_dims(names_batch, axis=1), params_batch))
+        np.savetxt(f'{worker_dir}worker_{i}_job.csv', job, delimiter=',', fmt='%s')
+
+    # Run workers to calculate PGStat
+    mpi_multiprocessing(
+        cpus,
+        len(names),
+        f'fspnet.utils.pyxspec_worker {worker_dir}',
+        python_path=python_path,
     )
 
-    return losses, spectra_max
+    # Retrieve worker outputs
+    for i in range(cpus):
+        data.append(np.loadtxt(f'{worker_dir}worker_{i}_job.csv', delimiter=',', dtype=str))
+
+    data_ = np.concatenate(data)
+
+    # If job_name is provided, save all worker data to file
+    if job_name:
+        np.savetxt(f'{worker_dir}{job_name}.csv', data_, delimiter=',', fmt='%s')
+
+    # Median loss
+    print(f'Reduced PGStat Loss: {np.median(data_[:, -1].astype(float)):.3e}')

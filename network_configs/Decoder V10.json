@@ -1,0 +1,68 @@
+{
+  "net": {
+    "description": "Same as V8 but using Netloader",
+    "checkpoints": 1,
+    "Linear": {
+      "dropout": 0
+    }
+  },
+  "layers": [
+    {
+      "type": "Linear",
+      "factor": 0.5,
+      "dropout": 0
+    },
+    {
+      "type": "Linear",
+      "factor": 0.5,
+      "dropout": 0
+    },
+    {
+      "type": "Linear",
+      "factor": 1
+    },
+    {
+      "type": "Checkpoint"
+    },
+    {
+      "type": "Linear",
+      "factor": 1,
+      "dropout": 0
+    },
+    {
+      "type": "Checkpoint"
+    },
+    {
+      "type": "Linear",
+      "factor": 1
+    },
+    {
+      "type": "Shortcut",
+      "layer": 0
+    },
+    {
+      "type": "Shortcut",
+      "layer": 1
+    },
+    {
+      "type": "Reshape",
+      "shape": [1, -1]
+    },
+    {
+      "type": "Recurrent",
+      "bidirectional": "mean"
+    },
+    {
+      "type": "Reshape",
+      "shape": [-1]
+    },
+    {
+      "type": "Linear",
+      "factor": 1
+    },
+    {
+      "type": "Reshape",
+      "shape": [1, -1]
+    }
+  ]
+}

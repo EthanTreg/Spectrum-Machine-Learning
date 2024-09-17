@@ -1,0 +1,55 @@
+{
+  "net": {
+    "paper": "arXiv:2201.03545",
+    "github": "https://github.com/facebookresearch/ConvNeXt",
+    "checkpoints": 1,
+    "Conv": {
+      "activation": "GELU"
+    },
+    "DropPath": {
+      "prob": 0
+    }
+  },
+  "layers": [
+    {
+      "type": "Checkpoint"
+    },
+    {
+      "type": "ConvDepth",
+      "layer": -1,
+      "factor": 1,
+      "kernel": 7,
+      "stride": 1,
+      "padding": 3,
+      "norm": "layer",
+      "activation": null
+    },
+    {
+      "type": "Conv",
+      "kernel": 1,
+      "factor": 4,
+      "layer": -1,
+      "padding": "same"
+    },
+    {
+      "type": "Conv",
+      "kernel": 1,
+      "factor": 1,
+      "layer": -2,
+      "padding": "same",
+      "activation": null
+    },
+    {
+      "type": "Scale",
+      "scale": 1e-6,
+      "dims": 1
+    },
+    {
+      "type": "DropPath"
+    },
+    {
+      "type": "Shortcut",
+      "layer": 0
+    }
+  ]
+}

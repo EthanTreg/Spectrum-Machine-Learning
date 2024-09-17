@@ -1,0 +1,62 @@
+{
+  "net": {
+    "description": "Same as V8 but using Netloader",
+    "checkpoints": 1,
+    "Conv": {
+      "dropout": 0
+    }
+  },
+  "layers": [
+    {
+      "type": "ConvDownscale",
+      "filters": 16
+    },
+    {
+      "type": "Conv",
+      "filters": 32
+    },
+    {
+      "type": "ConvDownscale",
+      "filters": 32
+    },
+    {
+      "type": "Conv",
+      "filters": 32
+    },
+    {
+      "type": "ConvDownscale",
+      "filters": 32
+    },
+    {
+      "type": "Conv",
+      "filters": 32
+    },
+    {
+      "type": "Reshape",
+      "shape": [-1]
+    },
+    {
+      "type": "Linear",
+      "features": 120
+    },
+    {
+      "type": "Checkpoint"
+    },
+    {
+      "type": "Linear",
+      "features": 120
+    },
+    {
+      "type": "Linear",
+      "features": 120
+    },
+    {
+      "type": "Shortcut",
+      "layer": -1
+    },
+    {
+      "type": "Linear",
+      "factor": 1
+    }
+  ]
+}

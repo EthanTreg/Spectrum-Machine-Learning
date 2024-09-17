@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 from numpy import ndarray
 from astropy.io import fits
+from netloader.utils.utils import progress_bar
 
-from fspnet.utils.utils import progress_bar
 from fspnet.utils.preprocessing import spectrum_data
 from fspnet.utils.workers import initialize_worker, initialize_pyxspec
 

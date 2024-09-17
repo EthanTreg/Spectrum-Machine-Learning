@@ -4,10 +4,9 @@ Utility functions for multiprocessing
 import os
 import re
 import subprocess
-import logging as log
 from time import time
 
-from fspnet.utils.utils import progress_bar
+from netloader.utils.utils import progress_bar
 
 
 def mpi_multiprocessing(cpus: int, total: int, arg: str, python_path: str = 'python3'):
@@ -62,9 +61,7 @@ def mpi_multiprocessing(cpus: int, total: int, arg: str, python_path: str = 'pyt
                 progress_bar(count, total + 1, text=text)
                 text = ''
             elif 'error' in line.lower():
-                print()
-                log.error(f'Multiprocessing error:\n{line}')
-
+                raise RuntimeError(f'Multiprocessing error:\n{line}')
 
     print(f'\nWorkers finished\tTime: {time() - initial_time:.3e} s')
 
@@ -76,15 +73,15 @@ def check_cpus(cpus: int) -> int:
 
     Parameters
     ----------
-    cpus : str
+    cpus : int
         Number of threads to check
 
     Returns
     -------
-    str
+    int
         Number of threads
     """
     if cpus < 1 or cpus > os.cpu_count():
-        return os.cpu_count()
+        return int(os.cpu_count())
 
     return cpus

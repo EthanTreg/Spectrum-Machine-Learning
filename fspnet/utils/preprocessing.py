@@ -141,7 +141,7 @@ def spectrum_data(
         back_exposure: float,
         spectrum: pd.DataFrame,
         background: pd.DataFrame,
-        cut_off: tuple[float, float] = None) -> tuple[ndarray, ndarray, ndarray, ndarray]:
+        cut_off: tuple[float, float] | None = None) -> tuple[ndarray, ndarray, ndarray, ndarray]:
     """
     Corrects and normalizes the spectrum using background, exposure time and number of detectors
     Also calculates the normalized uncertainty from data counts
@@ -204,7 +204,7 @@ def spectrum_data(
 def correct_spectrum_file(
         spectrum_path: str,
         background_dir: str = '',
-        cut_off: tuple[float, float] = None) -> tuple[int, ndarray, ndarray, ndarray]:
+        cut_off: tuple[float, float] | None = None) -> tuple[int, ndarray, ndarray, ndarray]:
     """
     Fetches spectrum file, corrects, normalizes, and bins data
 

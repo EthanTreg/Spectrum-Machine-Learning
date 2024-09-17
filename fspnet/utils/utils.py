@@ -5,8 +5,8 @@ import os
 from argparse import ArgumentParser
 
 import yaml
-import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from numpy import ndarray
 
 
@@ -31,31 +31,6 @@ def _interactive_check() -> bool:
     return False
 
 
-def progress_bar(i: int, total: int, text: str = ''):
-    """
-    Terminal progress bar
-
-    Parameters
-    ----------
-    i : integer
-        Current progress
-    total : integer
-        Completion number
-    text : string, default = '
-        Optional text to place at the end of the progress bar
-    """
-    length = 50
-    i += 1
-
-    filled = int(i * length / total)
-    percent = i * 100 / total
-    bar_fill = '█' * filled + '-' * (length - filled)
-    print(f'\rProgress: |{bar_fill}| {int(percent)}%\t{text}\t', end='')
-
-    if i == total:
-        print()
-
-
 def closest_factors(num: int) -> tuple[int, int]:
     """
     Finds the closest factors for a given integer
@@ -76,6 +51,35 @@ def closest_factors(num: int) -> tuple[int, int]:
         factor -= 1
 
     return factor, int(num / factor)
+
+
+def legend_marker(colours: list[str], labels: list[str], markers: list[str] = None) -> ndarray:
+    """
+    Creates markers for a legend
+
+    Parameters
+    ----------
+    colours : list[string]
+        Colours for the legend
+    labels : list[string]
+        Labels for the legend
+    markers : list[string], default = None
+        Markers for the legend
+
+    Returns
+    -------
+    ndarray
+        Legend labels
+    """
+    legend_labels = []
+
+    if markers is None:
+        markers = [None] * len(colours)
+
+    for colour, label, marker in zip(colours, labels, markers):
+        legend_labels.append([plt.gca().scatter([], [], color=colour, marker=marker), label])
+
+    return np.array(legend_labels).swapaxes(0, 1)
 
 
 def subplot_grid(num: int) -> np.ndarray:
@@ -157,9 +161,9 @@ def file_names(data_dir: str, blacklist: list[str] = None, whitelist: str = None
 
 
 def name_sort(
-        names: list[ndarray, ndarray],
-        data: list[ndarray, ndarray],
-        shuffle=True) -> tuple[list[ndarray, ndarray], list[ndarray, ndarray]]:
+        names: list[ndarray],
+        data: list[ndarray],
+        shuffle=True) -> tuple[list[ndarray], list[ndarray]]:
     """
     Sorts names and data so that two arrays contain the same names
 
@@ -204,21 +208,6 @@ def name_sort(
     names = [names[i] for i in sort_idx]
 
     return names, data
-
-
-def get_device() -> tuple[dict, torch.device]:
-    """
-    Gets the device for PyTorch to use
-
-    Returns
-    -------
-    tuple[dictionary, device]
-        Arguments for the PyTorch DataLoader to use when loading data into memory and PyTorch device
-    """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    kwargs = {'num_workers': 1, 'pin_memory': True} if device == 'cuda' else {}
-
-    return kwargs, device
 
 
 def open_config(key: str, config_path: str, parser: ArgumentParser = None) -> tuple[str, dict]:
