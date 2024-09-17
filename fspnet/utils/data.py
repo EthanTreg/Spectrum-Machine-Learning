@@ -45,9 +45,13 @@ class SpectrumDataset(Dataset):
             data = pickle.load(file)
 
         self.spectra = np.array(data['spectra'])[:, :data['spectra'].shape[-1] // 2 * 2]
-        self.uncertainty = np.array(
-            data['uncertainties'],
-        )[:, :data['uncertainties'].shape[-1] // 2 * 2]
+
+        if 'uncertainties' in data:
+            self.uncertainty = np.array(
+                data['uncertainties'],
+            )[:, :data['uncertainties'].shape[-1] // 2 * 2]
+        else:
+            self.uncertainty = np.zeros_like(self.spectra)
 
         # Get spectra names if available
         if 'names' in data:
@@ -65,7 +69,7 @@ class SpectrumDataset(Dataset):
         if 'param_uncertainty' in data:
             self.param_uncertainty = np.abs(data['param_uncertainty'])
         else:
-            self.param_uncertainty = np.ones_like(self.params)
+            self.param_uncertainty = np.zeros_like(self.params)
 
     def __len__(self) -> int:
         return len(self.spectra)

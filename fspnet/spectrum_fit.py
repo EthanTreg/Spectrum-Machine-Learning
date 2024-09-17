@@ -419,7 +419,7 @@ def main(config_path: str = '../config.yaml'):
         plots_dir=f'{plots_dir}Autoencoder_',
         train=net.losses[0],
     )
-    data = net.predict(e_loaders[0])
+    data = net.predict(e_loaders[0], path=predictions_path)
     plots.plot_reconstructions(
         data['inputs'][:, 0],
         data['preds'],

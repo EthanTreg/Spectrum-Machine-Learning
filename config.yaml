@@ -65,15 +65,15 @@ spectrum-fit:
     # Whether PyXspec tests should be used or not
     tests: False
     # File number to save decoder progress
-    decoder-save: 1000
+    decoder-save: 0
     # File number to save encoder progress
-    encoder-save: 1000
+    encoder-save: 0
     # File number to load decoder state
-    decoder-load: 1000
+    decoder-load: 1
     # File number to load encoder state
-    encoder-load: 1000
+    encoder-load: 1
     # Number of epochs to train for
-    epochs: 50
+    epochs: 200
     # Number of inputs to process between network weight updates
     batch-size: 60
     # Number of threads to use for multiprocessing, 0 will use all available,
@@ -99,7 +99,7 @@ spectrum-fit:
     # can also contain parameters (params) for supervised learning and/or PyXspec validation,
     # and file names (names) if specific files in the directory should be used
     # if parameters are provided and PyXspec validation is used
-    decoder-data-path: *spectra_data_path
+    decoder-data-path: *synthetic_data_path
     # Path to the spectra for encoder training, same format as for decoder
     encoder-data-path: *spectra_data_path
     # Path to the directory of spectra fits files, only required if parameters exists,
