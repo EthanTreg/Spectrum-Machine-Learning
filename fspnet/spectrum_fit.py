@@ -90,14 +90,14 @@ class AutoencoderNet(nn.Module):
         return self
 
 
-def pyxspec_tests(config: dict[str, Any], data: dict[str, ndarray]) -> None:
+def pyxspec_tests(
+        data: dict[str, ndarray],
+        config: str | dict[str, Any] = '../config.yaml') -> None:
     """
     Tests the PGStats of the different fitting methods using PyXspec
 
     Parameters
     ----------
-    config : dict[str, Any]
-        Configuration dictionary
     data : dict[str, ndarray]
         ids : ndarray
             Files names of the FITS spectra corresponding to the parameters
@@ -105,7 +105,12 @@ def pyxspec_tests(config: dict[str, Any], data: dict[str, ndarray]) -> None:
             Parameter predictions
         targets : ndarray
             Best fit parameters
+    config : string | dictionary, default = '../config.yaml'
+        Configuration dictionary or path to the configuration dictionary
     """
+    if isinstance(config, str):
+        _, config = open_config('spectrum-fit', config)
+
     # Initialize variables
     cpus: int = config['training']['cpus']
     python: str = config['training']['python-path']
@@ -210,7 +215,7 @@ def net_init(
         Constructed decoder and autoencoder
     """
     if isinstance(config, str):
-        _, config = open_config('main', config)
+        _, config = open_config('spectrum-fit', config)
 
     # Load config parameters
     e_save_num = config['training']['encoder-save']
@@ -334,7 +339,7 @@ def init(config: dict | str = '../config.yaml') -> tuple[
         Train & validation dataloaders for decoder and autoencoder, decoder, and autoencoder
     """
     if isinstance(config, str):
-        _, config = open_config('main', config)
+        _, config = open_config('spectrum-fit', config)
 
     # Load config parameters
     batch_size = config['training']['batch-size']
@@ -419,7 +424,7 @@ def main(config_path: str = '../config.yaml'):
         plots_dir=f'{plots_dir}Autoencoder_',
         train=net.losses[0],
     )
-    data = net.predict(e_loaders[0], path=predictions_path)
+    data = net.predict(e_loaders[-1], path=predictions_path)
     plots.plot_reconstructions(
         data['inputs'][:, 0],
         data['preds'],
@@ -427,7 +432,7 @@ def main(config_path: str = '../config.yaml'):
     )
 
     # Plot linear weight mappings
-    plots.plot_linear_weights(param_names, net.net, plots_dir=plots_dir)
+    plots.plot_linear_weights(param_names, decoder.net, plots_dir=plots_dir)
 
     # WARNING: Not updated yet to use PyTorch-Network-Loader
     # plots.plot_encoder_pgstats(f'{plots_dir}{worker_dir}Encoder_Xspec_output.csv', config)
@@ -468,13 +473,12 @@ def main(config_path: str = '../config.yaml'):
     )
 
     # Calculate saliencies
-    # WARNING: Not updated yet to use PyTorch-Network-Loader
-    # decoder_saliency(d_loaders[1], decoder)
-    # saliency_output = autoencoder_saliency(e_loaders[1], encoder, decoder)
-    # plots.plot_saliency(plots_dir, *saliency_output)
+    decoder_saliency(d_loaders[1], decoder.net)
+    saliency_output = autoencoder_saliency(e_loaders[1], net.net)
+    plots.plot_saliency(*saliency_output, plots_dir=plots_dir)
 
     if tests:
-        pyxspec_tests(config, data)
+        pyxspec_tests(data, config=config)
 
 
 if __name__ == '__main__':

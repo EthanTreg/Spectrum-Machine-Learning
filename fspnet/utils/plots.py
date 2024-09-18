@@ -836,13 +836,15 @@ def plot_saliency(
     x_regions: ndarray
     major_axes: ndarray
     minor_axes: ndarray
-    x_data: ndarray = load_x_data(spectra.shape[1])
+    x_data: ndarray = load_x_data(spectra.shape[-1])
     fig: FigureBase
     legend: Legend
     twin_axis: Axes
     axis: Axes
 
     x_regions = x_data[::bins]
+    spectra = spectra.squeeze()
+    predictions = predictions.squeeze()
     saliencies = np.mean(saliencies.reshape(saliencies.shape[0], -1, bins), axis=-1)
 
     # Initialize saliency plots

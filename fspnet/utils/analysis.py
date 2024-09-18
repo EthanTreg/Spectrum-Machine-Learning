@@ -6,17 +6,16 @@ import re
 import torch
 import numpy as np
 from numpy import ndarray
-from netloader.network import Network
 from netloader.utils.utils import get_device
 from torch.utils.data import DataLoader
+from torch.nn import Module
 
 from fspnet.utils.multiprocessing import check_cpus, mpi_multiprocessing
 
 
 def autoencoder_saliency(
         loader: DataLoader,
-        encoder: Network,
-        decoder: Network) -> tuple[ndarray, ndarray, ndarray]:
+        net: Module) -> tuple[ndarray, ndarray, ndarray]:
     """
     Calculates the importance of each part of the input spectrum on the output spectrum
     by calculating the saliency using backpropagation of the autoencoder
@@ -25,10 +24,8 @@ def autoencoder_saliency(
     ----------
     loader : DataLoader
         Autoencoder validation data loader
-    encoder : Network
-        Encoder half of the network
-    decoder : Network
-        Decoder half of the network
+    net : Module
+        Autoencoder
 
     Returns
     -------
@@ -36,16 +33,15 @@ def autoencoder_saliency(
         Original spectra, output, and saliency
     """
     # Constants
-    spectra = next(iter(loader))[1][:8].to(get_device()[1])
+    spectra = next(iter(loader))[-1][:8].to(get_device()[1])
 
     # Initialization
     torch.backends.cudnn.enabled = False
-    encoder.eval()
-    decoder.eval()
+    net.eval()
     spectra.requires_grad_()
 
     # Calculate saliency through backpropagation
-    output = decoder(encoder(spectra))
+    output = net(spectra)
     loss = torch.nn.MSELoss()(output, spectra)
     loss.backward()
     saliency = spectra.grad.data.abs().cpu()
@@ -54,7 +50,7 @@ def autoencoder_saliency(
     return spectra.detach().cpu().numpy(), output.detach().cpu().numpy(), saliency.numpy()
 
 
-def decoder_saliency(loader: DataLoader, decoder: Network):
+def decoder_saliency(loader: DataLoader, decoder: Module):
     """
     Calculates the importance of each parameter on the output spectrum
     by calculating the saliency using backpropagation of the decoder
@@ -63,7 +59,7 @@ def decoder_saliency(loader: DataLoader, decoder: Network):
     ----------
     loader : DataLoader
         Decoder validation data loader
-    decoder : Network
+    decoder : Module
         Decoder half of the network
     """
     # Constants
@@ -74,7 +70,7 @@ def decoder_saliency(loader: DataLoader, decoder: Network):
     torch.backends.cudnn.enabled = False
     decoder.eval()
 
-    for _, spectra, params, *_ in loader:
+    for _, params, spectra, *_ in loader:
         spectra = spectra.to(device)
         params = params.to(device)
         params.requires_grad_()
@@ -100,7 +96,7 @@ def decoder_saliency(loader: DataLoader, decoder: Network):
     )
 
 
-def linear_weights(net: Network) -> ndarray:
+def linear_weights(net: Module) -> ndarray:
     """
     Returns the mapping of all linear weights from the input to the output
 
@@ -113,7 +109,7 @@ def linear_weights(net: Network) -> ndarray:
 
     Parameters
     ----------
-    net : Network
+    net : Module
         Network to learn the mapping for
 
     Returns
